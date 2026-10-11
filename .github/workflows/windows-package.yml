@@ -31,6 +31,10 @@ concurrency:
 jobs:
   package:
     if: github.repository == 'Ayont/AyCode' && github.ref == 'refs/heads/main'
+    # GitHub requires push-level access even to GET a draft release (read returns 403).
+    # This ephemeral token is passed only to the downloader, which has no write API.
+    permissions:
+      contents: write
     runs-on: windows-2025
     timeout-minutes: 20
     defaults:

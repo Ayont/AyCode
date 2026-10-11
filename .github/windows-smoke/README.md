@@ -10,8 +10,12 @@ signed `release.json`, not inferred from this public repository's commit.
 
 The downloader reads only `Ayont/AyCode`, verifies the Ed25519 publisher signature,
 the requested manifest hash and each downloaded file hash/size. Draft access uses
-the job's read-only `GITHUB_TOKEN`; a 404 is a failure, never a fallback to a newer
-or published release. Authentication is stripped before any CDN redirect.
+the job's short-lived automatic `GITHUB_TOKEN`. GitHub requires push-level access
+even to read drafts: the read-only probe returned HTTP 403. Consequently this one
+manually dispatched job requests `contents: write`; the driver itself only sends
+GET requests. There is no persistent custom token and no write API in the driver.
+A failed request is never a fallback to a newer or published release.
+Authentication is stripped before any CDN redirect.
 
 The disposable `windows-2025` runner checks the ZIP and a silent NSIS installation
 in a temporary directory. Both must boot the expected version and real engine,
