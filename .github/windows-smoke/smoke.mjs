@@ -87,6 +87,7 @@ try {
   phase = 'ZIP extraction';
   powerShell('Expand-Archive -LiteralPath $env:SMOKE_ZIP -DestinationPath $env:SMOKE_UNPACKED', { SMOKE_ZIP: join(root, zip), SMOKE_UNPACKED: unpacked });
   const zipped = await exercise(join(unpacked, 'AyCode.exe'), join(root, 'zip-profile'), 'zip');
+  console.log('ZIP passed: version, engine, native PowerShell, restart and fixture persistence.');
 
   // NSIS /D must be the final, unquoted argument, including spaces in the destination.
   // Only signed publisher binaries run; no user-provided path becomes a command.
@@ -101,7 +102,7 @@ try {
   const executable = join(installed, 'AyCode.exe');
   await access(executable);
   // runAfterFinish may start exactly this fresh installation; close only that path.
-  powerShell('Get-Process -Name AyCode -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:SMOKE_INSTALLED_EXE } | Stop-Process -Force', { SMOKE_INSTALLED_EXE: executable });
+  powerShell('Get-Process | Where-Object { $_.ProcessName -eq "AyCode" -and $_.Path -eq $env:SMOKE_INSTALLED_EXE } | Stop-Process -Force', { SMOKE_INSTALLED_EXE: executable });
   const nsis = await exercise(executable, join(root, 'installed-profile'), 'installed');
   const proof = { ...expected, workflowCommit: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, platform: 'win32', arch: 'x64', assets: verified.assets, zipped, nsis, inAppUpdate: false, appShotCapture: false };
   await writeFile(join(root, 'windows-proof.json'), JSON.stringify(proof, null, 2));
