@@ -1,5 +1,5 @@
-name: Windows package
-run-name: Windows ${{ inputs.release_id }} ${{ inputs.version }} ${{ inputs.source_commit }} ${{ inputs.pipeline_id }} ${{ inputs.manifest_sha256 }}
+name: Windows AppShot fixture diagnosis
+run-name: AppShot diagnosis ${{ inputs.release_id }} ${{ inputs.version }} ${{ inputs.source_commit }} ${{ inputs.pipeline_id }} ${{ inputs.manifest_sha256 }}
 on:
   workflow_dispatch:
     inputs:
@@ -26,11 +26,11 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: windows-package-${{ inputs.release_id }}
+  group: windows-appshot-diagnosis-${{ inputs.release_id }}
   cancel-in-progress: false
 jobs:
   package:
-    if: github.repository == 'Ayont/AyCode' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Ayont/AyCode' && github.ref == 'refs/heads/codex/windows-appshot-fixture'
     # GitHub requires push-level access even to GET a draft release (read returns 403).
     # This ephemeral token is passed only to the downloader, which has no write API.
     permissions:
@@ -64,7 +64,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           AYCODE_SMOKE_ROOT: ${{ runner.temp }}/aycode-windows-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Check ZIP, native PowerShell, restart and NSIS installation
-        run: node smoke.mjs
+      - name: Diagnose synthetic AppShot visibility with windowsHide true and false
+        run: node diagnose.mjs
         env:
           AYCODE_SMOKE_ROOT: ${{ runner.temp }}/aycode-windows-${{ github.run_id }}-${{ github.run_attempt }}
