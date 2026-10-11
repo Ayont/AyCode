@@ -2,6 +2,10 @@
   "name": "aycode-public-windows-smoke",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test download.test.mjs" },
-  "dependencies": { "@playwright/test": "1.63.0" }
+  "scripts": {
+    "test": "node --test download.test.mjs environment.test.mjs"
+  },
+  "dependencies": {
+    "@playwright/test": "1.63.0"
+  }
 }

@@ -21,7 +21,10 @@ The disposable `windows-2025` runner checks the ZIP and a silent NSIS installati
 in a temporary directory. Both must boot the expected version and real engine,
 run the packaged PowerShell terminal, close, and start again with a persisted
 fixture project. No personal accounts, provider logins or user files are used.
-The app and installer receive a small environment allowlist without CI tokens.
+The app and installer receive a small environment allowlist without CI tokens or
+execution overrides. ZIP, installer and installed-app profiles each have separate
+HOME/USERPROFILE, AppData, temporary and application-data directories; inherited
+variants of these environment names are removed case-insensitively.
 
 From version 7.4.6, the shipped AppShot PowerShell helper must also capture a
 synthetic foreground WinForms window with the expected dimensions and colors,
@@ -29,6 +32,24 @@ and reject a wrong process ID and the excluded owner process. The helper is
 loaded unchanged from the verified package. Its child receives the same
 environment allowlist; evidence stays in the disposable runner's temporary folder.
 Earlier baselines explicitly report `appShotCapture: false`.
+
+From 7.4.6 both ZIP and NSIS also exercise the actual Windows renderer: the
+three-step introduction without installation consent, hidden native menu row
+after a language change, project-to-chat navigation, unsent draft retention,
+Back, Control+B, Alt+Left and discovery of the Graph section. The actual bootstrap
+must report `win32` on every launch. No chat is sent and no model is installed.
+
+Each fresh profile then exercises the ordinary account bridge using deliberately
+synthetic Claude/Codex `.cmd` fixtures with spaces in their paths. The test checks
+two separate account directories per provider, an unchanged synthetic default
+identity, copied settings, shared-skill junctions, post-login status and logout.
+It observes a real `cmd.exe → node.exe → node.exe` login tree before cancellation
+and requires that tree to exit before cleanup, distinguishing reused process IDs
+by creation time. Cleanup targets only command lines containing the unique random
+fixture directory. The fixtures never authenticate to provider services.
+`syntheticAccounts` explicitly excludes real OAuth, Credential Manager behavior,
+account-selected chat execution and status-command timeout termination. Older
+baselines report `nativeUi: false` and `syntheticAccounts: false`.
 
 A successful run emits `AYCODE_WINDOWS_PROOF=...` in the log, including the source
 identity and exact asset hashes. The run name carries the requested identity.

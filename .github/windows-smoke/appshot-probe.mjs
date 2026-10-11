@@ -47,6 +47,8 @@ public static class PublicProbeWindow {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);
 }
 '@
 $form = New-Object System.Windows.Forms.Form
@@ -78,6 +80,7 @@ try {
   $bounds = New-Object PublicProbeWindow+Rect
   if (-not [PublicProbeWindow]::GetWindowRect($form.Handle, [ref]$bounds)) { throw 'Cannot read synthetic fixture bounds.' }
   [System.Windows.Forms.Application]::DoEvents()
+  if (-not [PublicProbeWindow]::IsWindowVisible($form.Handle) -or [PublicProbeWindow]::IsIconic($form.Handle)) { throw 'Synthetic fixture must be visible and not minimized.' }
   $shot = [AyCodeAppShot]::Capture(${quote(shotId)}, ${quote(shotDir)}, 0, $fixturePid)
   $pixels = @()
   if ($shot.image) {
@@ -103,7 +106,8 @@ try {
 try {
   fs.writeFileSync(script, '\uFEFF' + body, 'utf8');
   const stdout = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-File', script], {
-    cwd: temporary, env: cleanEnv, encoding: 'utf8', timeout: 60_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
+    // windowsHide:true also hides this process's WinForms window via STARTUPINFO.
+    cwd: temporary, env: cleanEnv, encoding: 'utf8', timeout: 60_000, maxBuffer: 2 * 1024 * 1024, windowsHide: false,
   });
   const result = JSON.parse(stdout.trim());
   fs.writeFileSync(path.join(evidence, 'appshot-probe.json'), JSON.stringify(result, null, 2) + '\n');

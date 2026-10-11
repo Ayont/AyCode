@@ -64,7 +64,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           AYCODE_SMOKE_ROOT: ${{ runner.temp }}/aycode-windows-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Check ZIP, native PowerShell, restart and NSIS installation
+      - name: Check ZIP, NSIS, native UI, accounts, PowerShell, restart and AppShot
         run: node smoke.mjs
         env:
           AYCODE_SMOKE_ROOT: ${{ runner.temp }}/aycode-windows-${{ github.run_id }}-${{ github.run_attempt }}

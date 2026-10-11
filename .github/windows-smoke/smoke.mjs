@@ -4,6 +4,9 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inputs, sha256, needsAppShot } from './download.mjs';
+import { cleanEnvironment } from './environment.mjs';
+import { verifyWindowsShell } from './windows-ui.mjs';
+import { verifyWindowsAccounts } from './windows-accounts.mjs';
 
 const expected = inputs(process.env);
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('This check requires native Windows x64.');
@@ -46,23 +49,39 @@ function powerShell(script, extra = {}) {
   return execFileSync(ps, ['-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference = 'Stop'; ${script}`], { env: { ...cleanEnv, ...extra }, encoding: 'utf8', timeout: 120_000, windowsHide: true });
 }
 
-async function start(executable, profile) {
-  app = await _electron.launch({ executablePath: executable, env: { ...cleanEnv, AYCODE_USER_DATA: profile, AYCODE_MOBILE_PORT: '0' }, timeout: 60_000 });
+async function prepareProfile(profile) {
+  await mkdir(profile);
+  for (const directory of ['home', 'roaming', 'local', 'temp', 'user-data']) await mkdir(join(profile, directory));
+  return cleanEnvironment(process.env, profile);
+}
+
+async function start(executable, environment) {
+  app = await _electron.launch({ executablePath: executable, env: environment, timeout: 60_000 });
   const page = await deadline(app.firstWindow(), 'First application window');
   await until(() => Promise.resolve(page.url()), (url) => url.startsWith('file://') && url.endsWith('/renderer/index.html'), 'Packaged renderer');
   await until(() => page.evaluate(() => Boolean(window.aycode)), Boolean, 'Application bridge');
   const boot = await until(() => page.evaluate(() => window.aycode.bootstrap()), (value) => value.bootstrapComplete && value.engine?.state === 'ready', 'Packaged engine');
   if (boot.appVersion !== expected.version) throw new Error('Running version differs from the signed candidate.');
+  if (boot.platform !== 'win32') throw new Error('The packaged application does not report Windows.');
   return { page, boot, pid: app.process().pid };
 }
 async function exercise(executable, profile, label) {
   phase = `${label}: start`;
-  await mkdir(profile);
+  const environment = await prepareProfile(profile);
   const folder = join(root, `${label}-project`);
   await mkdir(folder);
-  const first = await start(executable, profile);
+  const first = await start(executable, environment);
   const project = await deadline(first.page.evaluate((directory) => window.aycode.addProject(directory), folder), 'Create temporary project');
   if (!project?.id) throw new Error('Temporary project was not created.');
+  let nativeUi = false;
+  let syntheticAccounts = false;
+  // The baseline predates the current introduction and account implementation.
+  if (needsAppShot(expected.version)) {
+    phase = `${label}: native application navigation`;
+    nativeUi = await verifyWindowsShell(app, first.page, project, { firstStart: true });
+    phase = `${label}: synthetic Windows accounts`;
+    syntheticAccounts = await verifyWindowsAccounts(app, first.page, profile);
+  }
   phase = `${label}: native terminal`;
   const terminal = await deadline(first.page.evaluate((id) => window.aycode.terminalOpen(id, { cols: 80, rows: 24, command: "Write-Output ('AYCODE' + '_PUBLIC_PTY_OK')" }), project.id), 'PowerShell terminal');
   if (!/powershell(?:\.exe)?$/i.test(terminal.shell)) throw new Error('The default terminal is not PowerShell.');
@@ -70,10 +89,10 @@ async function exercise(executable, profile, label) {
   await deadline(first.page.evaluate((id) => window.aycode.terminalClose(id), terminal.id), 'Close temporary terminal');
   phase = `${label}: close and restart`;
   await close();
-  const second = await start(executable, profile);
+  const second = await start(executable, environment);
   if (!Array.isArray(second.boot.projects) || !second.boot.projects.some((item) => item.id === project.id && item.path === folder)) throw new Error('The temporary project did not survive restart.');
   await close();
-  return { version: expected.version, engine: true, powershellPty: true, restart: true, profilePersisted: true };
+  return { version: expected.version, platform: first.boot.platform, engine: true, powershellPty: true, restart: true, profilePersisted: true, nativeUi, syntheticAccounts };
 }
 
 try {
@@ -105,8 +124,8 @@ try {
   phase = 'NSIS installation';
   const installed = join(root, 'NSIS installed app');
   const nsisProfile = join(root, 'nsis-profile');
-  await mkdir(nsisProfile);
-  installer = spawn(join(root, setup), ['/S', `/D=${installed}`], { env: { ...cleanEnv, AYCODE_USER_DATA: nsisProfile, AYCODE_MOBILE_PORT: '0' }, windowsHide: true, windowsVerbatimArguments: true, stdio: 'ignore' });
+  const installerEnvironment = await prepareProfile(nsisProfile);
+  installer = spawn(join(root, setup), ['/S', `/D=${installed}`], { env: installerEnvironment, windowsHide: true, windowsVerbatimArguments: true, stdio: 'ignore' });
   const exit = await deadline(new Promise((resolve, reject) => { installer.once('error', reject); installer.once('exit', resolve); }), 'NSIS installer', 120_000);
   installer = undefined;
   if (exit !== 0) throw new Error('NSIS installation failed.');
@@ -118,7 +137,7 @@ try {
   const proof = { ...expected, workflowCommit: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, platform: 'win32', arch: 'x64', assets: verified.assets, zipped, nsis, inAppUpdate: false, appShotCapture };
   await writeFile(join(root, 'windows-proof.json'), JSON.stringify(proof, null, 2));
   console.log(`AYCODE_WINDOWS_PROOF=${JSON.stringify(proof)}`);
-  if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `Windows ZIP and NSIS passed for ${expected.version}.\n\nSource: ${expected.sourceCommit}; pipeline: ${expected.pipelineId}.\n\nBoth runs checked version, engine, native PowerShell and a new process with persisted fixture data. ${appShotCapture ? 'The shipped AppShot helper captured only a synthetic foreground window and rejected wrong/owner PIDs.' : 'AppShot is not part of this pre-7.4.6 baseline.'} In-app upgrade and Electron AppShot hotkey/composer integration were not tested.\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `Windows ZIP and NSIS passed for ${expected.version}.\n\nSource: ${expected.sourceCommit}; pipeline: ${expected.pipelineId}.\n\nBoth runs checked version, Windows platform, engine, native PowerShell and a new process with persisted fixture data. ${zipped.nativeUi && nsis.nativeUi ? 'Both installations also passed first-start/navigation/menu/draft checks and synthetic Claude/Codex account isolation and cancellation.' : 'The old baseline does not include current UI/account checks.'} ${appShotCapture ? 'The shipped AppShot helper captured only a synthetic foreground window and rejected wrong/owner PIDs.' : 'AppShot is not part of this pre-7.4.6 baseline.'} In-app upgrade and Electron AppShot hotkey/composer integration were not tested.\n`);
 } catch (error) {
   console.error(`Windows package check failed at ${phase}: ${error.message}`);
   process.exitCode = 1;
