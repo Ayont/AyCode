@@ -1,0 +1,93 @@
+# Manual, public-package-only verification; no release publication or private credentials.
+name: Windows public upgrade
+run-name: Windows upgrade ${{ inputs.proof_kind }} ${{ inputs.stable_version }} ${{ inputs.nightly_version }} ${{ inputs.stable_source_commit }} ${{ inputs.nightly_source_commit }}
+on:
+  workflow_dispatch:
+    inputs:
+      proof_kind:
+        description: Older-stable helper check or required final candidate proof
+        required: true
+        type: choice
+        default: final-release
+        options: [pre-release-helper, final-release]
+      stable_version:
+        description: Exact already-public stable version
+        required: true
+        type: string
+      nightly_version:
+        description: Exact already-public normal nightly of the final candidate
+        required: true
+        type: string
+      stable_source_commit:
+        description: Independently expected source SHA of the public stable
+        required: true
+        type: string
+      nightly_source_commit:
+        description: Independently expected source SHA of the normal nightly
+        required: true
+        type: string
+      stable_release_id:
+        description: Exact public GitHub release ID
+        required: true
+        type: string
+      stable_pipeline_id:
+        description: Exact stable GitLab pipeline ID
+        required: true
+        type: string
+      nightly_pipeline_id:
+        description: Exact nightly GitLab pipeline ID
+        required: true
+        type: string
+      stable_manifest_sha256:
+        description: SHA-256 of published stable SHA256SUMS bytes
+        required: true
+        type: string
+      nightly_manifest_sha256:
+        description: SHA-256 of published nightly SHA256SUMS bytes
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: windows-upgrade-${{ inputs.stable_release_id }}
+  cancel-in-progress: false
+jobs:
+  upgrade:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Ayont/AyCode' && github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: .github/windows-upgrade
+    env:
+      AYCODE_PROOF_KIND: ${{ inputs.proof_kind }}
+      AYCODE_STABLE_VERSION: ${{ inputs.stable_version }}
+      AYCODE_NIGHTLY_VERSION: ${{ inputs.nightly_version }}
+      AYCODE_STABLE_SOURCE_COMMIT: ${{ inputs.stable_source_commit }}
+      AYCODE_NIGHTLY_SOURCE_COMMIT: ${{ inputs.nightly_source_commit }}
+      AYCODE_STABLE_RELEASE_ID: ${{ inputs.stable_release_id }}
+      AYCODE_STABLE_PIPELINE_ID: ${{ inputs.stable_pipeline_id }}
+      AYCODE_NIGHTLY_PIPELINE_ID: ${{ inputs.nightly_pipeline_id }}
+      AYCODE_STABLE_MANIFEST_SHA256: ${{ inputs.stable_manifest_sha256 }}
+      AYCODE_NIGHTLY_MANIFEST_SHA256: ${{ inputs.nightly_manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22.22.3'
+          package-manager-cache: false
+      - name: Install only the public blackbox driver
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate trust boundaries
+        run: npm test
+      - name: Download only already-public signed packages
+        run: node prepare.mjs
+        env:
+          AYCODE_UPGRADE_ROOT: ${{ runner.temp }}/aycode-upgrade-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Observe a real updater installation and automatic relaunch
+        run: node run.mjs
+        env:
+          AYCODE_UPGRADE_ROOT: ${{ runner.temp }}/aycode-upgrade-${{ github.run_id }}-${{ github.run_attempt }}

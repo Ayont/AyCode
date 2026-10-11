@@ -1,0 +1,11 @@
+{
+  "name": "aycode-public-windows-upgrade-probe",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test verify.test.mjs"
+  },
+  "dependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

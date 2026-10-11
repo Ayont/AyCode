@@ -136,6 +136,9 @@ async function exercise(executable, profile, label) {
   const first = await start(executable, environment);
   const project = await deadline(first.page.evaluate((directory) => window.aycode.addProject(directory), folder), 'Create temporary project');
   if (!project?.id) throw new Error('Temporary project was not created.');
+  // The fixture calls the bridge, outside the renderer controller's local state.
+  // A normal reload must discover the saved project before real UI assertions.
+  await first.page.reload();
   let nativeUi = false;
   let syntheticAccounts = false;
   // The baseline predates the current introduction and account implementation.
