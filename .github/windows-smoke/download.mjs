@@ -21,6 +21,12 @@ export function inputs(env) {
   return values;
 }
 
+export function needsAppShot(version) {
+  if (!/^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(version) || version.trim() !== version) throw new Error('Invalid version.');
+  const [major, minor, patch] = version.split('.').map(Number);
+  return major > 7 || (major === 7 && (minor > 5 || (minor === 5 && patch >= 6)));
+}
+
 /** Never forward GitHub authentication onto an asset CDN or a redirect URL. */
 export async function request(apiPath, token, accept, fetcher = fetch) {
   if (!new RegExp(`^${REPO}/releases/(?:[1-9]\\d*|assets/[1-9]\\d*)$`).test(apiPath)) throw new Error('Unapproved GitHub API path.');

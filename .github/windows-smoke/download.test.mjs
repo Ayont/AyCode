@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { inputs, request, bytes, signedManifest, releaseAssets, checkSource, sha256 } from './download.mjs';
+import { inputs, request, bytes, signedManifest, releaseAssets, checkSource, sha256, needsAppShot } from './download.mjs';
 
 const env = { AYCODE_RELEASE_ID: '409626651', AYCODE_VERSION: '7.4.5', AYCODE_SOURCE_COMMIT: '5964ba62fdce29c2b377d16fc764972fcbd1f137', AYCODE_PIPELINE_ID: '230', AYCODE_MANIFEST_SHA256: 'a'.repeat(64) };
 const key = generateKeyPairSync('ed25519');
@@ -58,4 +58,10 @@ test('release identity, unique assets and signed source identity cannot drift', 
   assert.throws(() => releaseAssets({ ...release, assets: [...release.assets, release.assets[0]] }, expected), /asset/);
   checkSource({ version: '7.4.5', commit: expected.sourceCommit, pipeline: '230' }, expected);
   assert.throws(() => checkSource({ version: '7.4.5', commit: expected.sourceCommit, pipeline: '231' }, expected), /mismatch/);
+});
+
+test('AppShot packaged helper is required from 7.5.6 without lexicographic version mistakes', () => {
+  for (const version of ['6.99.99', '7.4.5', '7.5.5']) assert.equal(needsAppShot(version), false);
+  for (const version of ['7.5.6', '7.5.10', '7.10.0', '8.0.0', '10.0.0']) assert.equal(needsAppShot(version), true);
+  for (const version of ['7.5', '7.5.6-beta', '7.5.6\n']) assert.throws(() => needsAppShot(version), /version/);
 });

@@ -23,15 +23,22 @@ run the packaged PowerShell terminal, close, and start again with a persisted
 fixture project. No personal accounts, provider logins or user files are used.
 The app and installer receive a small environment allowlist without CI tokens.
 
+From version 7.5.6, the shipped AppShot PowerShell helper must also capture a
+synthetic foreground WinForms window with the expected dimensions and colors,
+and reject a wrong process ID and the excluded owner process. The helper is
+loaded unchanged from the verified package. Its child receives the same
+environment allowlist; evidence stays in the disposable runner's temporary folder.
+Earlier baselines explicitly report `appShotCapture: false`.
+
 A successful run emits `AYCODE_WINDOWS_PROOF=...` in the log, including the source
 identity and exact asset hashes. The run name carries the requested identity.
 There are no Actions artifact uploads or caches. Standard hosted runner minutes
 for public repositories are covered by GitHub's public-repository policy; this
 workflow uses no larger runner and changes no billing settings.
 
-This is **not** proof of an in-app upgrade from an older version, a successful
-AppShot capture, SmartScreen reputation or Authenticode signing. Those are
-separate checks. A skipped or failed job is not native Windows proof.
+This is **not** proof of an in-app upgrade from an older version, the Electron
+AppShot hotkey/composer integration, SmartScreen reputation or Authenticode
+signing. Those are separate checks. A skipped or failed job is not native Windows proof.
 
 ## Local verification of the public driver
 

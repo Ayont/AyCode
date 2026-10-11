@@ -2,7 +2,8 @@ import { _electron } from '@playwright/test';
 import { spawn, execFileSync } from 'node:child_process';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, win32 } from 'node:path';
-import { inputs, sha256 } from './download.mjs';
+import { fileURLToPath } from 'node:url';
+import { inputs, sha256, needsAppShot } from './download.mjs';
 
 const expected = inputs(process.env);
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('This check requires native Windows x64.');
@@ -89,6 +90,16 @@ try {
   const zipped = await exercise(join(unpacked, 'AyCode.exe'), join(root, 'zip-profile'), 'zip');
   console.log('ZIP passed: version, engine, native PowerShell, restart and fixture persistence.');
 
+  let appShotCapture = false;
+  if (needsAppShot(expected.version)) {
+    phase = 'packaged AppShot helper';
+    const output = execFileSync(process.execPath, [fileURLToPath(new URL('./appshot-probe.mjs', import.meta.url)), unpacked, join(root, 'appshot-evidence')], { env: cleanEnv, encoding: 'utf8', timeout: 75_000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+    const result = JSON.parse(output.trim());
+    if (result.status !== 'passed') throw new Error('Packaged AppShot helper did not pass.');
+    console.log(`AYCODE_APPSHOT_PROOF=${JSON.stringify(result)}`);
+    appShotCapture = true;
+  }
+
   // NSIS /D must be the final, unquoted argument, including spaces in the destination.
   // Only signed publisher binaries run; no user-provided path becomes a command.
   phase = 'NSIS installation';
@@ -104,10 +115,10 @@ try {
   // runAfterFinish may start exactly this fresh installation; close only that path.
   powerShell('Get-Process | Where-Object { $_.ProcessName -eq "AyCode" -and $_.Path -eq $env:SMOKE_INSTALLED_EXE } | Stop-Process -Force', { SMOKE_INSTALLED_EXE: executable });
   const nsis = await exercise(executable, join(root, 'installed-profile'), 'installed');
-  const proof = { ...expected, workflowCommit: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, platform: 'win32', arch: 'x64', assets: verified.assets, zipped, nsis, inAppUpdate: false, appShotCapture: false };
+  const proof = { ...expected, workflowCommit: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, platform: 'win32', arch: 'x64', assets: verified.assets, zipped, nsis, inAppUpdate: false, appShotCapture };
   await writeFile(join(root, 'windows-proof.json'), JSON.stringify(proof, null, 2));
   console.log(`AYCODE_WINDOWS_PROOF=${JSON.stringify(proof)}`);
-  if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `Windows ZIP and NSIS passed for ${expected.version}.\n\nSource: ${expected.sourceCommit}; pipeline: ${expected.pipelineId}.\n\nBoth runs checked version, engine, native PowerShell and a new process with persisted fixture data. In-app upgrade and AppShot capture were not tested.\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `Windows ZIP and NSIS passed for ${expected.version}.\n\nSource: ${expected.sourceCommit}; pipeline: ${expected.pipelineId}.\n\nBoth runs checked version, engine, native PowerShell and a new process with persisted fixture data. ${appShotCapture ? 'The shipped AppShot helper captured only a synthetic foreground window and rejected wrong/owner PIDs.' : 'AppShot is not part of this pre-7.5.6 baseline.'} In-app upgrade and Electron AppShot hotkey/composer integration were not tested.\n`);
 } catch (error) {
   console.error(`Windows package check failed at ${phase}: ${error.message}`);
   process.exitCode = 1;
