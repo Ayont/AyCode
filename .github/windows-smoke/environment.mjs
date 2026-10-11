@@ -15,10 +15,13 @@ export function cleanEnvironment(source, fixtureRoot) {
     const name = systemNames.get(key.toUpperCase());
     if (name && typeof value === 'string') environment[name] = value;
   }
+  const home = win32.join(fixtureRoot, 'home');
+  const local = win32.join(home, 'AppData', 'Local');
   return { ...environment,
-    HOME: win32.join(fixtureRoot, 'home'), USERPROFILE: win32.join(fixtureRoot, 'home'),
-    APPDATA: win32.join(fixtureRoot, 'roaming'), LOCALAPPDATA: win32.join(fixtureRoot, 'local'),
-    TEMP: win32.join(fixtureRoot, 'temp'), TMP: win32.join(fixtureRoot, 'temp'),
+    HOME: home, USERPROFILE: home,
+    // Known Folder APIs expand USERPROFILE; match their normal directory layout.
+    APPDATA: win32.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: local,
+    TEMP: win32.join(local, 'Temp'), TMP: win32.join(local, 'Temp'),
     AYCODE_USER_DATA: win32.join(fixtureRoot, 'user-data'), AYCODE_MOBILE_PORT: '0',
   };
 }

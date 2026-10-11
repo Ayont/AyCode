@@ -51,8 +51,34 @@ function powerShell(script, extra = {}) {
 
 async function prepareProfile(profile) {
   await mkdir(profile);
-  for (const directory of ['home', 'roaming', 'local', 'temp', 'user-data']) await mkdir(join(profile, directory));
-  return cleanEnvironment(process.env, profile);
+  const environment = cleanEnvironment(process.env, profile);
+  for (const key of ['HOME', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'AYCODE_USER_DATA'])
+    await mkdir(environment[key], { recursive: true });
+  // Read the same native Known Folder API used by Electron, without CREATE flags.
+  // An environment override alone must never send the app back to the runner profile.
+  const script = `$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class FixtureFolders {
+  [DllImport("shell32.dll", CharSet=CharSet.Unicode)]
+  public static extern int SHGetFolderPathW(IntPtr owner, int folder, IntPtr token, uint flags, StringBuilder path);
+}
+'@
+$roaming = New-Object System.Text.StringBuilder 260
+$local = New-Object System.Text.StringBuilder 260
+$roamingResult = [FixtureFolders]::SHGetFolderPathW([IntPtr]::Zero, 26, [IntPtr]::Zero, 0, $roaming)
+$localResult = [FixtureFolders]::SHGetFolderPathW([IntPtr]::Zero, 28, [IntPtr]::Zero, 0, $local)
+@{roamingResult=$roamingResult; localResult=$localResult; roamingMatches=($roaming.ToString() -ieq $env:APPDATA); localMatches=($local.ToString() -ieq $env:LOCALAPPDATA)} | ConvertTo-Json -Compress`;
+  const folders = JSON.parse(execFileSync(ps, ['-NoProfile', '-NonInteractive', '-Command', script], {
+    env: environment, encoding: 'utf8', timeout: 15_000, windowsHide: true,
+  }).trim());
+  console.log(`AYCODE_PROFILE_PREFLIGHT=${JSON.stringify(folders)}`);
+  if (folders.roamingResult !== 0 || folders.localResult !== 0 ||
+      !folders.roamingMatches || !folders.localMatches)
+    throw new Error('Native Known Folders do not match the isolated application profile.');
+  return environment;
 }
 
 async function startupDiagnostic(application, environment, stderr) {

@@ -18,9 +18,9 @@ test('application profiles replace every inherited home variant and reject CI ex
   assert.equal(env.ComSpec, 'C:\\Windows\\System32\\cmd.exe');
   assert.equal(env.HOME, win32.join(root, 'home'));
   assert.equal(env.USERPROFILE, env.HOME);
-  assert.equal(env.APPDATA, win32.join(root, 'roaming'));
-  assert.equal(env.LOCALAPPDATA, win32.join(root, 'local'));
-  assert.equal(env.TEMP, win32.join(root, 'temp'));
+  assert.equal(env.APPDATA, win32.join(env.HOME, 'AppData', 'Roaming'));
+  assert.equal(env.LOCALAPPDATA, win32.join(env.HOME, 'AppData', 'Local'));
+  assert.equal(env.TEMP, win32.join(env.LOCALAPPDATA, 'Temp'));
   assert.equal(env.TMP, env.TEMP);
   assert.equal(env.AYCODE_USER_DATA, win32.join(root, 'user-data'));
   assert.equal(env.AYCODE_MOBILE_PORT, '0');
