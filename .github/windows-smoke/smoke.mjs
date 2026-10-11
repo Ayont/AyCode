@@ -1,6 +1,6 @@
 import { _electron } from '@playwright/test';
 import { spawn, execFileSync } from 'node:child_process';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import { join, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inputs, sha256, needsAppShot } from './download.mjs';
@@ -55,9 +55,39 @@ async function prepareProfile(profile) {
   return cleanEnvironment(process.env, profile);
 }
 
+async function startupDiagnostic(application, environment, stderr) {
+  const exists = async name => access(join(environment.AYCODE_USER_DATA, name)).then(() => true, () => false);
+  let mainLog = '';
+  try {
+    const handle = await open(join(environment.AYCODE_USER_DATA, 'logs', 'main.log'), 'r');
+    try {
+      const { size } = await handle.stat();
+      const buffer = Buffer.alloc(Math.min(size, 16 * 1024));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, Math.max(0, size - buffer.length));
+      mainLog = buffer.subarray(0, bytesRead).toString('utf8');
+    } finally { await handle.close(); }
+  } catch { /* A failure before logging is itself useful evidence. */ }
+  const state = await deadline(application.evaluate(({ app, BrowserWindow }) => ({
+    ready: app.isReady(), windows: BrowserWindow.getAllWindows().map(window => ({
+      visible: window.isVisible(), minimized: window.isMinimized(), destroyed: window.isDestroyed(),
+    })),
+  })), 'Startup state diagnostic', 3_000).catch(() => ({ unavailable: true }));
+  const sanitize = value => value.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/\b(Bearer\s+|(?:token|secret|password|api[_-]?key)\s*[=:]\s*)\S+/gi, '$1[redacted]');
+  console.error(`AYCODE_STARTUP_DIAGNOSTIC=${JSON.stringify({
+    exitCode: application.process().exitCode, signalCode: application.process().signalCode, state,
+    settingsFile: await exists('aycode.json'), mcpKeyFile: await exists('mcp-secrets.key'),
+    mainLog: sanitize(mainLog), stderr: sanitize(stderr()),
+  })}`);
+}
+
 async function start(executable, environment) {
   app = await _electron.launch({ executablePath: executable, env: environment, timeout: 60_000 });
-  const page = await deadline(app.firstWindow(), 'First application window');
+  let stderr = '';
+  app.process().stderr?.on('data', chunk => { stderr = (stderr + chunk.toString('utf8')).slice(-8192); });
+  let page;
+  try { page = await deadline(app.firstWindow(), 'First application window'); }
+  catch (error) { await startupDiagnostic(app, environment, () => stderr); throw error; }
   await until(() => Promise.resolve(page.url()), (url) => url.startsWith('file://') && url.endsWith('/renderer/index.html'), 'Packaged renderer');
   await until(() => page.evaluate(() => Boolean(window.aycode)), Boolean, 'Application bridge');
   const boot = await until(() => page.evaluate(() => window.aycode.bootstrap()), (value) => value.bootstrapComplete && value.engine?.state === 'ready', 'Packaged engine');
