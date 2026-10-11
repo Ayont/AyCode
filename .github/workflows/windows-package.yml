@@ -43,7 +43,6 @@ jobs:
       AYCODE_SOURCE_COMMIT: ${{ inputs.source_commit }}
       AYCODE_PIPELINE_ID: ${{ inputs.pipeline_id }}
       AYCODE_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
-      AYCODE_SMOKE_ROOT: ${{ runner.temp }}/aycode-windows-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -60,5 +59,8 @@ jobs:
         run: node download.mjs
         env:
           GH_TOKEN: ${{ github.token }}
+          AYCODE_SMOKE_ROOT: ${{ runner.temp }}/aycode-windows-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Check ZIP, native PowerShell, restart and NSIS installation
         run: node smoke.mjs
+        env:
+          AYCODE_SMOKE_ROOT: ${{ runner.temp }}/aycode-windows-${{ github.run_id }}-${{ github.run_attempt }}
