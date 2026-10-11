@@ -57,13 +57,31 @@ async function prepareProfile(profile) {
   // .NET delegates to Windows Known Folders without creating missing folders.
   // Avoid compiling a helper just to query the OS, and fail on runner-profile fallback.
   const script = `$ErrorActionPreference = 'Stop'
+Write-Output 'AYCODE_PROFILE_STARTED'
 $roaming = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
+Write-Output 'AYCODE_PROFILE_ROAMING'
 $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+Write-Output 'AYCODE_PROFILE_LOCAL'
 @{roamingExists=([bool]$roaming -and (Test-Path -LiteralPath $roaming -PathType Container)); localExists=([bool]$local -and (Test-Path -LiteralPath $local -PathType Container)); roamingMatches=($roaming -ieq $env:APPDATA); localMatches=($local -ieq $env:LOCALAPPDATA)} | ConvertTo-Json -Compress`;
-  const folders = JSON.parse(execFileSync(ps, ['-NoProfile', '-NonInteractive', '-Command', script], {
-    env: environment, encoding: 'utf8', timeout: 15_000, windowsHide: true,
-  }).trim());
-  console.log(`AYCODE_PROFILE_PREFLIGHT=${JSON.stringify(folders)}`);
+  let output;
+  const preflightStarted = Date.now();
+  try {
+    output = execFileSync(ps, ['-NoProfile', '-NonInteractive', '-Command', script], {
+      env: environment, encoding: 'utf8', timeout: 60_000, windowsHide: true,
+    }).trim();
+  } catch (error) {
+    const stdout = String(error.stdout || '');
+    console.error(`AYCODE_PROFILE_FAILURE=${JSON.stringify({
+      code: error.code, status: error.status, signal: error.signal, elapsedMs: Date.now() - preflightStarted,
+      started: stdout.includes('AYCODE_PROFILE_STARTED'),
+      roamingRead: stdout.includes('AYCODE_PROFILE_ROAMING'),
+      localRead: stdout.includes('AYCODE_PROFILE_LOCAL'),
+      stdoutBytes: Buffer.byteLength(stdout), stderrBytes: Buffer.byteLength(String(error.stderr || '')),
+    })}`);
+    throw error;
+  }
+  const folders = JSON.parse(output.split(/\r?\n/).at(-1));
+  console.log(`AYCODE_PROFILE_PREFLIGHT=${JSON.stringify({ ...folders, elapsedMs: Date.now() - preflightStarted })}`);
   if (!folders.roamingExists || !folders.localExists ||
       !folders.roamingMatches || !folders.localMatches)
     throw new Error('Native Known Folders do not match the isolated application profile.');
