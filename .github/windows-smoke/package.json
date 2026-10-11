@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test download.test.mjs environment.test.mjs"
+    "test": "node --test download.test.mjs environment.test.mjs windows-accounts.test.mjs"
   },
   "dependencies": {
     "@playwright/test": "1.63.0"

@@ -8,6 +8,16 @@ import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+export function fixtureProcessExists(pid, probe = process.kill) {
+  assert.ok(Number.isSafeInteger(pid) && pid > 0, 'Invalid fixture PID.');
+  try { probe(pid, 0); return true; }
+  catch (error) {
+    if (error.code === 'ESRCH') return false;
+    if (error.code === 'EPERM') return true;
+    throw error;
+  }
+}
+
 const HOME_KEYS = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'AYCODE_USER_DATA'];
 const FORBIDDEN_ENV = /TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION|PRIVATE_KEY|API_KEY|^NODE_OPTIONS$|^ELECTRON_RUN_AS_NODE$/i;
 
@@ -208,15 +218,35 @@ export async function verifyWindowsAccounts(app, page, fixtureRoot) {
   const commandEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
     /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|USERNAME|USERDOMAIN|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\))$/i.test(key)));
   Object.assign(commandEnv, runtime.env);
-  async function inspectPid(pid) {
-    assert.ok(Number.isSafeInteger(pid) && pid > 0, 'Invalid fixture PID.');
-    const script = `$ErrorActionPreference = 'Stop'; $p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; ` +
-      'if ($p) { [pscustomobject]@{ pid = [int]$p.ProcessId; parentPid = [int]$p.ParentProcessId; name = $p.Name; ' +
-      'commandLine = $p.CommandLine; created = $p.CreationDate.ToUniversalTime().ToString("o") } | ConvertTo-Json -Compress } else { "null" }';
-    const result = await execute(ps, ['-NoProfile', '-NonInteractive', '-Command', script], {
-      env: commandEnv, encoding: 'utf8', timeout: 10_000, windowsHide: true, maxBuffer: 64 * 1024,
-    });
-    return JSON.parse(result.stdout.trim());
+  async function inspectPids(pids) {
+    assert.ok(pids.length > 0 && pids.length <= 30, 'Invalid fixture PID count.');
+    for (const pid of pids) assert.ok(Number.isSafeInteger(pid) && pid > 0, 'Invalid fixture PID.');
+    const filter = pids.map(pid => `ProcessId = ${pid}`).join(' OR ');
+    const script = `$ErrorActionPreference = 'Stop'; [Console]::WriteLine('AYCODE_PROCESS_READER_STARTED'); ` +
+      `$clock = [Diagnostics.Stopwatch]::StartNew(); $rows = @(Get-CimInstance Win32_Process -Filter '${filter}'); ` +
+      `[Console]::WriteLine('AYCODE_PROCESS_READER_QUERIED'); ` +
+      '$items = @($rows | ForEach-Object { [pscustomobject]@{ pid = [int]$_.ProcessId; parentPid = [int]$_.ParentProcessId; name = $_.Name; ' +
+      'commandLine = $_.CommandLine; created = $_.CreationDate.ToUniversalTime().ToString("o") } }); ' +
+      '@{ items = $items; queryMs = $clock.ElapsedMilliseconds } | ConvertTo-Json -Depth 4 -Compress';
+    const started = Date.now();
+    let result;
+    try {
+      result = await execute(ps, ['-NoProfile', '-NonInteractive', '-Command', script], {
+        env: commandEnv, encoding: 'utf8', timeout: 45_000, windowsHide: true, maxBuffer: 64 * 1024,
+      });
+    } catch (error) {
+      const stdout = String(error.stdout || '');
+      console.error(`AYCODE_PROCESS_READER_FAILURE=${JSON.stringify({
+        code: error.code, signal: error.signal, killed: error.killed, elapsedMs: Date.now() - started,
+        started: stdout.includes('AYCODE_PROCESS_READER_STARTED'), queried: stdout.includes('AYCODE_PROCESS_READER_QUERIED'),
+        stderrBytes: Buffer.byteLength(String(error.stderr || '')),
+      })}`);
+      throw error;
+    }
+    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1));
+    assert.ok(Array.isArray(parsed.items), 'Invalid native process snapshot.');
+    console.log(`AYCODE_PROCESS_READER=${JSON.stringify({ elapsedMs: Date.now() - started, queryMs: parsed.queryMs, count: parsed.items.length })}`);
+    return parsed.items;
   }
   const owned = processInfo => processInfo && typeof processInfo.commandLine === 'string' &&
     processInfo.commandLine.toLowerCase().includes(fixture.toLowerCase());
@@ -307,9 +337,11 @@ export async function verifyWindowsAccounts(app, page, fixtureRoot) {
       const rows = await until(records, values => values.some(row => row.mode === 'descendant' && samePath(row.accountDir, pending.dir)), 'Live login descendant');
       const descendant = rows.find(row => row.mode === 'descendant' && samePath(row.accountDir, pending.dir));
       assert.equal(descendant.parentPid, pending.login.pid);
+      const pids = [pending.login.parentPid, pending.login.pid, descendant.pid];
+      const before = await inspectPids(pids);
       const processTree = [];
-      for (const pid of [pending.login.parentPid, pending.login.pid, descendant.pid]) {
-        const processInfo = await inspectPid(pid);
+      for (const pid of pids) {
+        const processInfo = before.find(item => item.pid === pid);
         assert.ok(owned(processInfo), 'Expected live owned fixture process was not observed.');
         processTree.push(processInfo);
       }
@@ -317,9 +349,15 @@ export async function verifyWindowsAccounts(app, page, fixtureRoot) {
       assert.equal(processTree[1].parentPid, processTree[0].pid);
       await bounded(page.evaluate(id => window.aycode.cancelAccountLogin(id), pending.account.id), 'Cancel synthetic login');
       await waitPhase(pending.account.id, 'cancelled');
+      // Observe termination natively within the existing deadline, independently
+      // of fresh PowerShell/WMI startup. Permission errors must never mean exit.
+      const terminationStarted = Date.now();
+      await until(() => pids.every(pid => !fixtureProcessExists(pid)), Boolean, 'Native login process termination', 15_000);
+      const terminationMs = Date.now() - terminationStarted;
+      const after = await inspectPids(pids);
       for (const previous of processTree) {
-        await until(() => inspectPid(previous.pid), current => !current || current.created !== previous.created,
-          `Native cancellation of ${previous.name}`, 15_000);
+        const current = after.find(item => item.pid === previous.pid);
+        assert.ok(!current || current.created !== previous.created, `Original ${previous.name} remained alive after cancellation.`);
       }
       await assert.rejects(lstat(join(pending.dir, basename(defaults[provider].identity))), { code: 'ENOENT' });
       await assertDefaults(provider);
@@ -338,7 +376,7 @@ export async function verifyWindowsAccounts(app, page, fixtureRoot) {
       }
       proof.push({ provider, nativeCmdWithSpaces: true, statusCommand: true, isolatedAccounts: 2,
         unchangedStandardFixture: true, sharedSkillsJunction: true, copiedSettings: true,
-        cancelledProcessTree: processTree.map(({ name }) => name), logoutIsolation: true, junctionRemoval: true });
+        cancelledProcessTree: processTree.map(({ name }) => name), nativeTerminationMs: terminationMs, logoutIsolation: true, junctionRemoval: true });
     }
     const final = await bounded(page.evaluate(() => window.aycode.listAccounts()), 'Final account list');
     assert.ok(final.every(account => account.isDefault));
@@ -354,9 +392,9 @@ export async function verifyWindowsAccounts(app, page, fixtureRoot) {
     const cleanupPids = new Set((await records().catch(() => []))
       .filter(row => row.mode === 'login' || row.mode === 'descendant')
       .flatMap(row => [row.pid, row.parentPid]));
-    for (const pid of cleanupPids) {
-      const current = await inspectPid(pid).catch(() => null);
-      if (owned(current)) await execute(taskkill, ['/PID', String(pid), '/T', '/F'], {
+    const remaining = cleanupPids.size ? await inspectPids([...cleanupPids]).catch(() => []) : [];
+    for (const current of remaining) {
+      if (owned(current)) await execute(taskkill, ['/PID', String(current.pid), '/T', '/F'], {
         env: commandEnv, timeout: 10_000, windowsHide: true, maxBuffer: 64 * 1024,
       }).catch(() => {});
     }
