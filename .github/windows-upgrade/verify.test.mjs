@@ -140,6 +140,6 @@ test('workflow resolves runner.temp only in the concrete preparation and executi
  });
  assert.doesNotMatch(workflow,/^      AYCODE_UPGRADE_ROOT:/m);
  for(const script of ['prepare','run']) {
-  assert.match(workflow,new RegExp(`        run: node ${script}\\.mjs\\n        env:\\n          AYCODE_UPGRADE_ROOT: \\$\\{\\{ runner\\.temp \\}\\}/aycode-upgrade-`));
+  assert.match(workflow,new RegExp(`        run: node ${script}\\.mjs\\r?\\n        env:\\r?\\n          AYCODE_UPGRADE_ROOT: \\$\\{\\{ runner\\.temp \\}\\}/aycode-upgrade-`));
  }
 });
