@@ -164,6 +164,7 @@ Jedes Update ist signiert und geprüft: Zu jedem Release gehören <code>SHA256SU
 <h2 align="center">Was ist <i>neu</i></h2>
 
 <table>
+<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.5"><b>7.4.5</b></a></td><td>Himmel in der Seitenleiste, Verbrauch im Detail, Zielsteuerung und Agent-Neustart ohne Chatverlust.</td></tr>
 <tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.4"><b>7.4.4</b></a></td><td>Pull Requests beobachten, Bilder während laufender Antworten, Worktrees aufräumen und bessere Office-Formatierung.</td></tr>
 <tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.2"><b>7.4.2</b></a></td><td>Die Mac-App ist mit Developer ID signiert und notarisiert, die Beta für iPhone und Apple Watch läuft über TestFlight, und Konnektoren aus dem Katalog starten Docker nur mit sicheren Schaltern.</td></tr>
 <tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.0"><b>7.4.0</b></a></td><td>Ein eigenes AyCode-Konto, Konnektoren mit einem Klick und Tabellen, die aussehen wie die Excel-Datei.</td></tr>
