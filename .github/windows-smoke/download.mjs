@@ -24,7 +24,7 @@ export function inputs(env) {
 export function needsAppShot(version) {
   if (!/^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(version) || version.trim() !== version) throw new Error('Invalid version.');
   const [major, minor, patch] = version.split('.').map(Number);
-  return major > 7 || (major === 7 && (minor > 5 || (minor === 5 && patch >= 6)));
+  return major > 7 || (major === 7 && (minor > 4 || (minor === 4 && patch >= 6)));
 }
 
 /** Never forward GitHub authentication onto an asset CDN or a redirect URL. */

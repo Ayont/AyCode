@@ -60,8 +60,8 @@ test('release identity, unique assets and signed source identity cannot drift', 
   assert.throws(() => checkSource({ version: '7.4.5', commit: expected.sourceCommit, pipeline: '231' }, expected), /mismatch/);
 });
 
-test('AppShot packaged helper is required from 7.5.6 without lexicographic version mistakes', () => {
-  for (const version of ['6.99.99', '7.4.5', '7.5.5']) assert.equal(needsAppShot(version), false);
-  for (const version of ['7.5.6', '7.5.10', '7.10.0', '8.0.0', '10.0.0']) assert.equal(needsAppShot(version), true);
+test('AppShot packaged helper is required from 7.4.6 without lexicographic version mistakes', () => {
+  for (const version of ['6.99.99', '7.3.99', '7.4.5']) assert.equal(needsAppShot(version), false);
+  for (const version of ['7.4.6', '7.4.10', '7.5.0', '7.10.0', '8.0.0', '10.0.0']) assert.equal(needsAppShot(version), true);
   for (const version of ['7.5', '7.5.6-beta', '7.5.6\n']) assert.throws(() => needsAppShot(version), /version/);
 });

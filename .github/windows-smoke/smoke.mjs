@@ -118,7 +118,7 @@ try {
   const proof = { ...expected, workflowCommit: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, platform: 'win32', arch: 'x64', assets: verified.assets, zipped, nsis, inAppUpdate: false, appShotCapture };
   await writeFile(join(root, 'windows-proof.json'), JSON.stringify(proof, null, 2));
   console.log(`AYCODE_WINDOWS_PROOF=${JSON.stringify(proof)}`);
-  if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `Windows ZIP and NSIS passed for ${expected.version}.\n\nSource: ${expected.sourceCommit}; pipeline: ${expected.pipelineId}.\n\nBoth runs checked version, engine, native PowerShell and a new process with persisted fixture data. ${appShotCapture ? 'The shipped AppShot helper captured only a synthetic foreground window and rejected wrong/owner PIDs.' : 'AppShot is not part of this pre-7.5.6 baseline.'} In-app upgrade and Electron AppShot hotkey/composer integration were not tested.\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `Windows ZIP and NSIS passed for ${expected.version}.\n\nSource: ${expected.sourceCommit}; pipeline: ${expected.pipelineId}.\n\nBoth runs checked version, engine, native PowerShell and a new process with persisted fixture data. ${appShotCapture ? 'The shipped AppShot helper captured only a synthetic foreground window and rejected wrong/owner PIDs.' : 'AppShot is not part of this pre-7.4.6 baseline.'} In-app upgrade and Electron AppShot hotkey/composer integration were not tested.\n`);
 } catch (error) {
   console.error(`Windows package check failed at ${phase}: ${error.message}`);
   process.exitCode = 1;

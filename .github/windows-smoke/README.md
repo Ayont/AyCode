@@ -23,7 +23,7 @@ run the packaged PowerShell terminal, close, and start again with a persisted
 fixture project. No personal accounts, provider logins or user files are used.
 The app and installer receive a small environment allowlist without CI tokens.
 
-From version 7.5.6, the shipped AppShot PowerShell helper must also capture a
+From version 7.4.6, the shipped AppShot PowerShell helper must also capture a
 synthetic foreground WinForms window with the expected dimensions and colors,
 and reject a wrong process ID and the excluded owner process. The helper is
 loaded unchanged from the verified package. Its child receives the same
