@@ -1,10 +1,12 @@
 import { _electron } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, readFile, readdir, writeFile, lstat } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile, lstat, realpath } from 'node:fs/promises';
 import { dirname, join, win32 } from 'node:path';
-import { inputs, cleanEnvironment, signedManifest, checkSource, checkUpdate, checkHelperLog, requiresStableUi, upgradeRoute, checkReviewHandoff } from './verify.mjs';
+import { inputs, cleanEnvironment, signedManifest, checkSource, checkUpdate, checkHelperLog, requiresStableUi, upgradeRoute, checkReviewHandoff,
+  installationMode, checkNsisHost, signedAssetHash, checkAssetBytes, checkNsisTree, checkNsisRegistration,
+  NSIS_PRODUCT_GUID, checkNsisFreshRegistration, nsisRegistrationObservation } from './verify.mjs';
 import { verifyWindowsShell } from './windows-ui.mjs';
 import { installFailureClass, observeInstallRequest, observeMainIdentity, reportInstallFailure,
   verifiedMainPid, nativePidState, replacementWindows } from './install-diagnostics.mjs';
@@ -14,11 +16,17 @@ if (process.platform !== 'win32' || process.arch !== 'x64')
   throw new Error('Native Windows x64 required.');
 const expected = inputs(process.env);
 const route = upgradeRoute(expected);
+const nsis = installationMode(expected) === 'nsis';
 const startVersion = expected[route.start + 'Version'];
 const targetVersion = expected[route.target + 'Version'];
 const root = process.env.AYCODE_UPGRADE_ROOT;
 if (!root || !win32.isAbsolute(root))
   throw new Error('Missing isolated absolute workspace.');
+if (nsis) {
+  checkNsisHost(process.env, root);
+  if ((await lstat(root)).isSymbolicLink() || (await realpath(root)).toLowerCase() !== win32.normalize(root).toLowerCase())
+    throw new Error('NSIS workspace must not redirect outside its disposable directory.');
+}
 const stored = JSON.parse(await readFile(join(root, 'verified-inputs.json'), 'utf8'));
 for (const [key, value] of Object.entries(expected))
   if (stored[key] !== value)
@@ -74,11 +82,17 @@ const taskkill = win32.join(
 );
 const executable = join(root, 'AyCode installed with spaces', 'AyCode.exe');
 const reference = join(root, 'target reference');
+const startReference = join(root, 'start reference');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let app,
   autoPid,
   installObservation,
   helperEvents,
+  installer,
+  installerEvidence,
+  nsisExtras,
+  registrationBefore,
+  registrationAfter,
 
   phase = 'package verification';
 
@@ -150,6 +164,56 @@ function processes() {
   });
   const values = JSON.parse(raw || '[]');
   return Array.isArray(values) ? values : [values];
+}
+
+function existingNsisRegistration() {
+  // Check every product key before running an installer: filtering by the new
+  // path would miss an existing installation that NSIS could otherwise remove.
+  return JSON.parse(powerShell(`
+$checked = 0; $present = 0
+foreach ($hive in @([Microsoft.Win32.RegistryHive]::CurrentUser, [Microsoft.Win32.RegistryHive]::LocalMachine)) {
+  foreach ($view in @([Microsoft.Win32.RegistryView]::Registry32, [Microsoft.Win32.RegistryView]::Registry64)) {
+    $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
+    try {
+      foreach ($path in @('Software\\${NSIS_PRODUCT_GUID}', 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${NSIS_PRODUCT_GUID}')) {
+        $key = $base.OpenSubKey($path, $false)
+        $checked++
+        if ($null -ne $key) { $present++; $key.Dispose() }
+      }
+    } finally { $base.Dispose() }
+  }
+}
+@{checkedKeys=$checked; presentKeys=$present} | ConvertTo-Json -Compress`));
+}
+
+function nsisRegistration() {
+  // Read only the fixed per-user x64 product entry. Its commands must name the
+  // synthetic installation exactly; no raw registry strings enter diagnostics.
+  return JSON.parse(powerShell(`
+$uninstaller = [IO.Path]::Combine($env:PROBE_INSTALL, 'Uninstall AyCode.exe')
+$quoted = '"' + $uninstaller + '"'
+$result = @{count=0; key=''; displayVersion=''; uninstallMatches=$false; quietUninstallMatches=$false; uninstallerExists=$false; installLocationMatches=$false}
+$base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, [Microsoft.Win32.RegistryView]::Registry64)
+try {
+  $key = $base.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${NSIS_PRODUCT_GUID}', $false)
+  if ($null -ne $key) {
+    try {
+      $result.count = 1
+      $result.key = '${NSIS_PRODUCT_GUID}'
+      $result.displayVersion = [string]$key.GetValue('DisplayVersion', '')
+      $result.uninstallMatches = [string]::Equals([string]$key.GetValue('UninstallString', ''), $quoted + ' /currentuser', [StringComparison]::OrdinalIgnoreCase)
+      $result.quietUninstallMatches = [string]::Equals([string]$key.GetValue('QuietUninstallString', ''), $quoted + ' /currentuser /S', [StringComparison]::OrdinalIgnoreCase)
+      $result.uninstallerExists = [IO.File]::Exists($uninstaller)
+    } finally { $key.Dispose() }
+  }
+  $installKey = $base.OpenSubKey('Software\\${NSIS_PRODUCT_GUID}', $false)
+  if ($null -ne $installKey) {
+    try {
+      $result.installLocationMatches = [string]::Equals([string]$installKey.GetValue('InstallLocation', ''), $env:PROBE_INSTALL, [StringComparison]::OrdinalIgnoreCase)
+    } finally { $installKey.Dispose() }
+  }
+} finally { $base.Dispose() }
+$result | ConvertTo-Json -Compress`, { PROBE_INSTALL: dirname(executable) }));
 }
 
 async function snapshot(directory) {
@@ -241,13 +305,52 @@ try {
     hashes[channel] = await fileHash(zip);
     if (hashes[channel] !== manifest.get(`AyCode-${version}-win-x64.zip`))
       throw new Error('Verified ZIP changed.');
+    if (nsis && channel === route.start) {
+      const name = `AyCode-Setup-${version}-win-x64.exe`;
+      const record = JSON.parse(await readFile(join(directory, 'verified.json'), 'utf8')).packages?.[name];
+      signedAssetHash(record, name, manifest);
+      const file = join(directory, name);
+      const stat = await lstat(file);
+      if (!stat.isFile()) throw new Error('Verified installer must be a regular file.');
+      checkAssetBytes(record, stat.size, await fileHash(file));
+      installerEvidence = { name, sha256: manifest.get(name), size: stat.size };
+    }
     powerShell('Expand-Archive -LiteralPath $env:PROBE_ZIP -DestinationPath $env:PROBE_DEST', {
       PROBE_ZIP: zip,
-      PROBE_DEST: channel === route.target ? reference : dirname(executable)
+      PROBE_DEST: channel === route.target ? reference : nsis ? startReference : dirname(executable)
     });
   }
 
   const targetTree = await snapshot(reference);
+  if (nsis) {
+    phase = 'verified silent NSIS installation';
+    // No installer runs outside the explicit disposable workflow. /S suppresses
+    // oneClick runAfterFinish; never pass --force-run. /D must be last/unquoted.
+    checkNsisHost(process.env, root);
+    checkNsisFreshRegistration(existingNsisRegistration());
+    if (processes().length !== 0)
+      throw new Error('Synthetic NSIS installation is not fresh.');
+    const setup = join(root, route.start, installerEvidence.name);
+    const setupStat = await lstat(setup);
+    if (!setupStat.isFile()) throw new Error('Verified installer must remain a regular file.');
+    checkAssetBytes({ size: installerEvidence.size, digest: `sha256:${installerEvidence.sha256}` },
+      setupStat.size, await fileHash(setup));
+    installer = spawn(setup, ['/S', `/D=${dirname(executable)}`], {
+      env: environment, cwd: join(root, route.start), windowsHide: true,
+      windowsVerbatimArguments: true, stdio: 'ignore'
+    });
+    const exit = await deadline(new Promise((resolve, reject) => {
+      installer.once('error', reject);
+      installer.once('exit', resolve);
+    }), 'NSIS installer', 120_000);
+    installer = undefined;
+    if (exit !== 0) throw new Error('NSIS installation failed.');
+    if (processes().length !== 0) throw new Error('Silent NSIS unexpectedly started the application.');
+    nsisExtras = checkNsisTree(await snapshot(dirname(executable)), await snapshot(startReference));
+    registrationBefore = nsisRegistration();
+    console.log(`AYCODE_NSIS_BEFORE=${JSON.stringify(nsisRegistrationObservation(registrationBefore, startVersion, targetVersion))}`);
+    checkNsisRegistration(registrationBefore, startVersion);
+  }
   const startAsar = await fileHash(join(dirname(executable), 'resources', 'app.asar'));
   if (!targetTree['resources/app.asar'] || startAsar === targetTree['resources/app.asar'])
     throw new Error('Package payloads must differ before updating.');
@@ -357,7 +460,12 @@ try {
   if (installError && !/closed|destroyed|Target|session/i.test(installError.message))
     throw installError;
   const installedTree = await snapshot(dirname(executable));
-  if (JSON.stringify(installedTree) !== JSON.stringify(targetTree))
+  if (nsis) {
+    registrationAfter = nsisRegistration();
+    console.log(`AYCODE_NSIS_AFTER=${JSON.stringify(nsisRegistrationObservation(registrationAfter, startVersion, targetVersion, registrationBefore.key))}`);
+    checkNsisTree(installedTree, targetTree, nsisExtras);
+    checkNsisRegistration(registrationAfter, targetVersion, registrationBefore.key);
+  } else if (JSON.stringify(installedTree) !== JSON.stringify(targetTree))
     throw new Error('Installed bytes differ from verified target ZIP.');
   await delay(3_000);
   if (!processes().some(item => item.pid === autoPid && item.window !== 0 && item.responding))
@@ -438,6 +546,14 @@ try {
     regularStableChannel: !route.review,
     regularNightlyUpgrade: route.review,
     reviewUpdaterProof: route.review,
+    installationMode: nsis ? 'nsis' : 'zip',
+    ...(nsis ? { nsis: {
+      installer: installerEvidence, silent: true, installerDidNotStartApp: true,
+      initialPayloadMatchesZip: true, uninstallerFilesPreserved: true,
+      preservedFiles: Object.keys(nsisExtras),
+      registration: { sameEntry: true, uninstallerExists: true, installLocationMatches: true,
+        displayVersionBefore: registrationBefore.displayVersion, displayVersionAfter: registrationAfter.displayVersion }
+    } } : {}),
     freshStaging: true,
     automaticRelaunch: automatic,
     nativeUi: { firstStart: firstStartUi, afterUpdate: targetUi },
@@ -458,7 +574,7 @@ try {
         ? ['pre-release helper check only; the final 7.4.6 upgrade proof is still required']
         : []),
       'not a historical 7.0.0 updater test',
-      'not an NSIS installation update test',
+      ...(nsis ? ['per-user silent NSIS on disposable Windows 2025 only; uninstallation was not executed'] : ['not an NSIS installation update test']),
       'not Authenticode or SmartScreen verification',
       'not a rollback or interrupted-install test'
     ]
@@ -478,6 +594,7 @@ try {
     }, installObservation);
   }
 } finally {
+  if (installer) kill(installer.pid);
   if (helperEvents) {
     console.error(`AYCODE_HELPER_EVENT_DIAGNOSTIC=${JSON.stringify(helperEvents.snapshot())}`);
     try { await helperEvents.dispose(); }

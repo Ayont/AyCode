@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { inputs, bytes, sha256, signedManifest, checkRelease, checkSource, upgradeRoute } from './verify.mjs';
+import { inputs, bytes, sha256, signedManifest, checkRelease, checkSource, upgradeRoute,
+  packageNames, releaseAsset, signedAssetHash, checkAssetBytes } from './verify.mjs';
 import { packageRequest } from './review-transport.mjs';
 
 const expected = inputs(process.env);
@@ -30,22 +31,9 @@ for (const channel of ['stable', 'nightly']) {
 
   checkRelease(release, expected, channel);
   const version = expected[channel + 'Version'];
-  const names = [`AyCode-${version}-win-x64.zip`, 'release.json', 'SHA256SUMS', 'SHA256SUMS.sig'];
-  const assets = Object.fromEntries(names.map(name => {
-    const matches = release.assets.filter(asset => asset.name === name);
-    const asset = matches[0];
-    if (
-      matches.length !== 1 ||
-      !Number.isSafeInteger(asset?.id) ||
-      asset.id < 1 ||
-      !Number.isSafeInteger(asset.size) ||
-      asset.size < 1 ||
-      asset.size > 1024 ** 3 ||
-      !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? '')
-    )
-      throw new Error('Missing, duplicate or invalid public release asset.');
-    return [name, asset];
-  }));
+  const packages = packageNames(expected, channel);
+  const names = [...packages, 'release.json', 'SHA256SUMS', 'SHA256SUMS.sig'];
+  const assets = Object.fromEntries(names.map(name => [name, releaseAsset(release, name)]));
 
   const assetURL = id => channel === 'stable'
     ? `https://api.github.com/repos/Ayont/AyCode/releases/assets/${id}`
@@ -68,11 +56,10 @@ for (const channel of ['stable', 'nightly']) {
     throw new Error('Source metadata lacks publisher signature.');
   checkSource(JSON.parse(source), expected, channel);
 
-  const zipName = names[0];
-  const zip = assets[zipName];
+  // The installer has an independent manifest entry; a signed ZIP never authorizes an EXE.
+  for (const name of packages) signedAssetHash(assets[name], name, manifest);
+  const zipName = packages[0];
   const zipHash = manifest.get(zipName);
-  if (!zipHash || zip.digest !== `sha256:${zipHash}`)
-    throw new Error('ZIP lacks exact publisher signature.');
   const directory = join(root, channel);
   await mkdir(directory);
   for (const [name, data] of [
@@ -82,25 +69,27 @@ for (const channel of ['stable', 'nightly']) {
   ])
     await writeFile(join(directory, name), data, { flag: 'wx' });
 
-  const destination = await open(join(directory, zipName), 'wx');
-  const hash = createHash('sha256');
-  let size = 0;
-  try {
-    const response = await request(assetURL(zip.id));
-    if (!response.body)
-      throw new Error('Empty ZIP response.');
-    for await (const chunk of response.body) {
-      size += chunk.length;
-      if (size > zip.size)
-        throw new Error('ZIP exceeds recorded size.');
-      hash.update(chunk);
-      await destination.writeFile(chunk);
+  const packageRecords = {};
+  for (const name of packages) {
+    const asset = assets[name];
+    const destination = await open(join(directory, name), 'wx');
+    const hash = createHash('sha256');
+    let size = 0;
+    try {
+      const response = await request(assetURL(asset.id));
+      if (!response.body) throw new Error('Empty package response.');
+      for await (const chunk of response.body) {
+        size += chunk.length;
+        if (size > asset.size) throw new Error('Package exceeds recorded size.');
+        hash.update(chunk);
+        await destination.writeFile(chunk);
+      }
+    } finally {
+      await destination.close();
     }
-  } finally {
-    await destination.close();
+    checkAssetBytes(asset, size, hash.digest('hex'));
+    packageRecords[name] = { name, id: asset.id, size: asset.size, digest: asset.digest };
   }
-  if (size !== zip.size || hash.digest('hex') !== zipHash)
-    throw new Error('ZIP hash/size mismatch.');
 
   await writeFile(join(directory, 'verified.json'), JSON.stringify({
     channel,
@@ -109,7 +98,8 @@ for (const channel of ['stable', 'nightly']) {
     pipelineId: expected[channel + 'PipelineId'],
     manifestSha256: expected[channel + 'ManifestSha256'],
     zipName,
-    zipSha256: zipHash
+    zipSha256: zipHash,
+    packages: packageRecords
   }), {
     flag: 'wx'
   });

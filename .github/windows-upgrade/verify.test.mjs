@@ -7,6 +7,111 @@ const env = Object.fromEntries(Object.entries(expected).map(([k,v]) => ['AYCODE_
 const hash = b => createHash('sha256').update(b).digest('hex');
 const stable = { id: 100, draft: false, prerelease: false, tag_name: 'v7.4.6', assets: [] };
 const review = { ...expected, proofKind: 'review-updater', stableSourceCommit: 'd'.repeat(40) };
+const nsis = { ...review, proofKind: 'review-updater-nsis' };
+test('NSIS is an explicit review-only starting mode and does not relax the final release', async () => {
+ const { installationMode, packageNames, upgradeRoute } = await import('./verify.mjs');
+ const values = Object.fromEntries(Object.entries(nsis).map(([k,v]) => ['AYCODE_'+k.replace(/[A-Z]/g,c=>'_'+c).toUpperCase(),v]));
+ assert.deepEqual(inputs(values), nsis);
+ assert.equal(installationMode(nsis), 'nsis');
+ for (const candidate of [expected, review]) assert.equal(installationMode(candidate), 'zip');
+ assert.deepEqual(upgradeRoute(nsis), upgradeRoute(review));
+ assert.deepEqual(packageNames(review, 'stable'), ['AyCode-7.4.6-win-x64.zip']);
+ assert.deepEqual(packageNames(nsis, 'stable'), ['AyCode-7.4.6-win-x64.zip', 'AyCode-Setup-7.4.6-win-x64.exe']);
+ assert.deepEqual(packageNames(nsis, 'nightly'), [`AyCode-${nsis.nightlyVersion}-win-x64.zip`]);
+ for (const patch of [{ AYCODE_PROOF_KIND: 'final-release' }, { AYCODE_PROOF_KIND: 'review-updater-nsis ' },
+  { AYCODE_STABLE_SOURCE_COMMIT: nsis.nightlySourceCommit }, { AYCODE_STABLE_VERSION: '7.4.7' }])
+  assert.throws(() => inputs({ ...values, ...patch }));
+ assert.throws(() => packageNames(nsis, 'other'));
+});
+test('NSIS executable needs its own exact signed asset, size and digest', async () => {
+ const { releaseAsset, signedAssetHash, checkAssetBytes } = await import('./verify.mjs');
+ const name = 'AyCode-Setup-7.4.6-win-x64.exe';
+ const asset = { name, id: 42, size: 512, digest: 'sha256:'+'a'.repeat(64) };
+ const manifest = new Map([[name, 'a'.repeat(64)]]);
+ assert.equal(releaseAsset({ assets: [asset] }, name), asset);
+ assert.equal(signedAssetHash(asset, name, manifest), 'a'.repeat(64));
+ assert.doesNotThrow(() => checkAssetBytes(asset, 512, 'a'.repeat(64)));
+ for (const patch of [{ size: 0 }, { size: '512' }, { size: 1024**3+1 }, { id: 0 }, { name: 'else.exe' }, { digest: 'sha256:'+'b'.repeat(64) }])
+  assert.throws(() => signedAssetHash({ ...asset, ...patch }, name, manifest));
+ assert.throws(() => releaseAsset({ assets: [asset, asset] }, name));
+ assert.throws(() => signedAssetHash(asset, name, new Map([['AyCode-7.4.6-win-x64.zip', 'a'.repeat(64)]])));
+ assert.throws(() => checkAssetBytes(asset, 511, 'a'.repeat(64)));
+ assert.throws(() => checkAssetBytes(asset, 512, 'b'.repeat(64)));
+ const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+ const sums = Buffer.from(`${'a'.repeat(64)}  ${name}\n`);
+ const signature = Buffer.from(sign(null, sums, privateKey).toString('base64'));
+ assert.equal(signedAssetHash(asset, name, signedManifest(sums, signature, hash(sums), publicKey)), 'a'.repeat(64));
+ assert.throws(() => signedManifest(sums, signature, 'b'.repeat(64), publicKey));
+});
+test('NSIS launch is confined to the exact disposable Windows 2025 workflow directory', async () => {
+ const { checkNsisHost } = await import('./verify.mjs');
+ const host = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'Ayont/AyCode', GITHUB_EVENT_NAME: 'workflow_dispatch',
+  GITHUB_REF: 'refs/heads/main', RUNNER_ENVIRONMENT: 'github-hosted', RUNNER_OS: 'Windows', ImageOS: 'win25',
+  RUNNER_TEMP: 'C:\\runner\\temp', GITHUB_RUN_ID: '100', GITHUB_RUN_ATTEMPT: '1' };
+ const root = 'C:\\runner\\temp\\aycode-review-upgrade-100-1';
+ assert.doesNotThrow(() => checkNsisHost(host, root));
+ assert.doesNotThrow(() => checkNsisHost({ ...host, ImageOS: 'win25-vs2026' }, root));
+ for (const patch of [{ GITHUB_ACTIONS: 'false' }, { RUNNER_ENVIRONMENT: 'self-hosted' }, { ImageOS: 'win22' },
+  { GITHUB_REPOSITORY: 'other/repo' }, { GITHUB_REF: 'refs/heads/other' }, { GITHUB_RUN_ID: '../100' }, { RUNNER_OS: 'Linux' }])
+  assert.throws(() => checkNsisHost({ ...host, ...patch }, root));
+ for (const path of ['C:\\Users\\real', root+'-other', 'C:\\runner\\temp', root+'\\..\\else'])
+  assert.throws(() => checkNsisHost(host, path));
+});
+test('NSIS permits only observed exact uninstaller extras and requires their byte preservation', async () => {
+ const { checkNsisTree } = await import('./verify.mjs');
+ const reference = { 'AyCode.exe': 'a'.repeat(64), 'resources/app.asar': 'b'.repeat(64) };
+ const extras = { 'Uninstall AyCode.exe': 'c'.repeat(64), 'uninstallerIcon.ico': 'd'.repeat(64) };
+ assert.deepEqual(checkNsisTree({ ...reference, ...extras }, reference), extras);
+ assert.deepEqual(checkNsisTree({ ...reference, ...extras }, reference, extras), extras);
+ assert.deepEqual(checkNsisTree({ ...reference, 'Uninstall AyCode.exe': extras['Uninstall AyCode.exe'] }, reference),
+  { 'Uninstall AyCode.exe': extras['Uninstall AyCode.exe'] });
+ for (const actual of [reference, { ...reference, ...extras, 'uninstall-other.exe': 'a'.repeat(64) },
+  { ...reference, ...extras, 'resources/Uninstall AyCode.exe': 'a'.repeat(64) },
+  { ...reference, ...extras, 'AyCode.exe': 'e'.repeat(64) }]) assert.throws(() => checkNsisTree(actual, reference));
+ for (const actual of [{ ...reference, 'Uninstall AyCode.exe': extras['Uninstall AyCode.exe'] },
+  { ...reference, ...extras, 'Uninstall AyCode.exe': 'e'.repeat(64) }]) assert.throws(() => checkNsisTree(actual, reference, extras));
+ assert.throws(() => checkNsisTree({ ...reference, ...extras }, { ...reference, ...extras }));
+});
+test('NSIS registry evidence requires the same entry, exact target version and a live uninstaller', async () => {
+ const { checkNsisRegistration, NSIS_PRODUCT_GUID } = await import('./verify.mjs');
+ const before = { key: NSIS_PRODUCT_GUID, count: 1,
+  uninstallMatches: true, quietUninstallMatches: true, uninstallerExists: true, installLocationMatches: true, displayVersion: '7.4.6' };
+ assert.doesNotThrow(() => checkNsisRegistration(before, '7.4.6'));
+ const after = { ...before, displayVersion: nsis.nightlyVersion };
+ assert.doesNotThrow(() => checkNsisRegistration(after, nsis.nightlyVersion, before.key));
+ for (const patch of [{ count: 0 }, { count: 2 }, { key: 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb' }, { uninstallMatches: false },
+  { quietUninstallMatches: false }, { uninstallerExists: false }, { installLocationMatches: false }, { displayVersion: '7.4.6' }])
+  assert.throws(() => checkNsisRegistration({ ...after, ...patch }, nsis.nightlyVersion, before.key));
+});
+test('NSIS refuses any existing product key even when its installation uses a different path', async () => {
+ const { checkNsisFreshRegistration } = await import('./verify.mjs');
+ assert.doesNotThrow(() => checkNsisFreshRegistration({ checkedKeys: 8, presentKeys: 0 }));
+ assert.throws(() => checkNsisFreshRegistration({ checkedKeys: 8, presentKeys: 1, installPath: 'C:\\Users\\real\\AyCode' }));
+ for (const patch of [{ checkedKeys: 7 }, { presentKeys: 8 }, { presentKeys: undefined }, { checkedKeys: '8' }])
+  assert.throws(() => checkNsisFreshRegistration({ checkedKeys: 8, presentKeys: 0, ...patch }));
+});
+test('NSIS diagnostics discard unknown registry text and expose only expected versions and fixed flags', async () => {
+ const { nsisRegistrationObservation } = await import('./verify.mjs');
+ const safe = nsisRegistrationObservation({ count: 1, key: 'SECRET', displayVersion: 'SECRET',
+  uninstallMatches: 'SECRET', quietUninstallMatches: true, uninstallerExists: false, extra: 'SECRET' }, '7.4.6', nsis.nightlyVersion, 'other');
+ assert.deepEqual(safe, { count: 1, sameEntry: false, displayVersion: 'other',
+  uninstallMatches: false, quietUninstallMatches: true, uninstallerExists: false, installLocationMatches: false });
+ assert.equal(nsisRegistrationObservation({ displayVersion: '7.4.6' }, '7.4.6', nsis.nightlyVersion).displayVersion, '7.4.6');
+});
+test('review workflow chooses ZIP or NSIS explicitly on a disposable Windows 2025 runner', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const workflow = await readFile(new URL('../workflows/windows-review-upgrade.yml', import.meta.url), 'utf8');
+ assert.match(workflow, /options: \[review-updater, review-updater-nsis\]/);
+ assert.match(workflow, /default: review-updater/);
+ assert.ok(workflow.includes('AYCODE_PROOF_KIND: ${{ inputs.proof_kind }}'));
+ assert.match(workflow, /runs-on: windows-2025/);
+ assert.ok(workflow.includes('RUNNER_ENVIRONMENT: ${{ runner.environment }}'));
+ const run = await readFile(new URL('./run.mjs', import.meta.url), 'utf8');
+ assert.match(run, /spawn\(setup, \['\/S', `\/D=\$\{dirname\(executable\)\}`\]/);
+ assert.doesNotMatch(run, /spawn\(setup,[\s\S]{0,100}--force-run/);
+ assert.match(run, /checkNsisTree\(installedTree, targetTree, nsisExtras\)/);
+ assert.match(run, /checkNsisRegistration\(registrationAfter, targetVersion, registrationBefore\.key\)/);
+});
 test('review updater direction is explicit and cannot certify the published stable updater', async () => {
  const { upgradeRoute } = await import('./verify.mjs');
  const values = Object.fromEntries(Object.entries(review).map(([k,v]) => ['AYCODE_'+k.replace(/[A-Z]/g,c=>'_'+c).toUpperCase(),v]));

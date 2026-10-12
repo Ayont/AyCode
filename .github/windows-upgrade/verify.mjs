@@ -59,7 +59,7 @@ export function inputs(env) {
 function checkPhase(expected) {
   // These release-specific bounds keep an older-stable helper check from being
   // mistaken for the final candidate proof. Inputs never come from the feed.
-  const targets = { 'pre-release-helper': '7.4.5', 'final-release': '7.4.6', 'review-updater': '7.4.6' };
+  const targets = { 'pre-release-helper': '7.4.5', 'final-release': '7.4.6', 'review-updater': '7.4.6', 'review-updater-nsis': '7.4.6' };
   if (!Object.hasOwn(targets, expected.proofKind) ||
       expected.stableVersion !== targets[expected.proofKind] ||
       !expected.nightlyVersion?.startsWith('7.4.7-nightly.'))
@@ -67,17 +67,112 @@ function checkPhase(expected) {
   if (expected.proofKind === 'final-release' &&
       expected.stableSourceCommit !== expected.nightlySourceCommit)
     throw new Error('The final stable and nightly must contain the same candidate source.');
-  if (expected.proofKind === 'review-updater' &&
+  if (['review-updater', 'review-updater-nsis'].includes(expected.proofKind) &&
       expected.stableSourceCommit === expected.nightlySourceCommit)
     throw new Error('The updater review must identify the corrected source separately from the published target.');
 }
 
 export function upgradeRoute(expected) {
   checkPhase(expected);
-  const review = expected.proofKind === 'review-updater';
+  const review = ['review-updater', 'review-updater-nsis'].includes(expected.proofKind);
   // "stable" is the versioned input slot for the private review payload only in
   // this explicit phase. It never changes or certifies the published stable.
   return { start: review ? 'stable' : 'nightly', target: review ? 'nightly' : 'stable', channelSwitch: !review, review };
+}
+
+export function installationMode(expected) {
+  checkPhase(expected);
+  return expected.proofKind === 'review-updater-nsis' ? 'nsis' : 'zip';
+}
+
+export function packageNames(expected, channel) {
+  if (!['stable', 'nightly'].includes(channel)) throw new Error('Invalid package channel.');
+  const names = [`AyCode-${expected[channel + 'Version']}-win-x64.zip`];
+  if (installationMode(expected) === 'nsis' && channel === 'stable')
+    names.push(`AyCode-Setup-${expected.stableVersion}-win-x64.exe`);
+  return names;
+}
+
+export function releaseAsset(release, name) {
+  const matches = release?.assets?.filter(asset => asset.name === name);
+  const asset = matches?.[0];
+  if (matches?.length !== 1 || !Number.isSafeInteger(asset?.id) || asset.id < 1 ||
+      !Number.isSafeInteger(asset.size) || asset.size < 1 || asset.size > 1024 ** 3 ||
+      !exact(/^sha256:[a-f0-9]{64}$/, asset.digest))
+    throw new Error('Missing, duplicate or invalid release asset.');
+  return asset;
+}
+
+export function signedAssetHash(asset, name, manifest) {
+  releaseAsset({ assets: [asset] }, name);
+  const hash = manifest.get(name);
+  if (!exact(/^[a-f0-9]{64}$/, hash) || asset.digest !== `sha256:${hash}`)
+    throw new Error('Package lacks exact publisher signature.');
+  return hash;
+}
+
+export function checkAssetBytes(asset, size, hash) {
+  if (size !== asset.size || `sha256:${hash}` !== asset.digest)
+    throw new Error('Package hash/size mismatch.');
+}
+
+export function checkNsisHost(env, root) {
+  if (env.GITHUB_ACTIONS !== 'true' || env.GITHUB_REPOSITORY !== 'Ayont/AyCode' ||
+      env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || env.GITHUB_REF !== 'refs/heads/main' ||
+      env.RUNNER_ENVIRONMENT !== 'github-hosted' || env.RUNNER_OS !== 'Windows' ||
+      !['win25', 'win25-vs2026'].includes(env.ImageOS) ||
+      !exact(/^[1-9]\d*$/, env.GITHUB_RUN_ID) || !exact(/^[1-9]\d*$/, env.GITHUB_RUN_ATTEMPT) ||
+      !exact(/^[a-z]:[\\/].+/i, env.RUNNER_TEMP) || typeof root !== 'string' ||
+      win32.normalize(root).toLowerCase() !== win32.join(env.RUNNER_TEMP,
+        `aycode-review-upgrade-${env.GITHUB_RUN_ID}-${env.GITHUB_RUN_ATTEMPT}`).toLowerCase())
+    throw new Error('NSIS requires the isolated disposable Windows 2025 review workflow.');
+}
+
+const nsisFiles = ['Uninstall AyCode.exe', 'uninstallerIcon.ico'];
+// electron-builder UUIDv5: appId me.ayont.aycode, namespace 50e065bc-3134-11e6-9bab-38c9862bdaf3.
+export const NSIS_PRODUCT_GUID = '2dcd7861-0419-52a7-9e05-c1e642848ea2';
+
+export function checkNsisFreshRegistration(value) {
+  if (value?.checkedKeys !== 8 || value.presentKeys !== 0)
+    throw new Error('A product installation already exists or registry isolation could not be verified.');
+}
+
+export function checkNsisTree(actual, reference, preserved) {
+  if (!reference?.['AyCode.exe'] || !reference['resources/app.asar'] ||
+      nsisFiles.some(name => Object.hasOwn(reference, name)))
+    throw new Error('Invalid ZIP reference for NSIS comparison.');
+  const extras = Object.fromEntries(nsisFiles.filter(name => Object.hasOwn(actual, name)).map(name => [name, actual[name]]));
+  if (!extras['Uninstall AyCode.exe'] ||
+      Object.values({ ...reference, ...extras }).some(hash => !exact(/^[a-f0-9]{64}$/, hash)))
+    throw new Error('NSIS uninstaller evidence missing.');
+  const expected = { ...reference, ...extras };
+  if (Object.keys(actual).length !== Object.keys(expected).length ||
+      Object.entries(expected).some(([name, hash]) => actual[name] !== hash))
+    throw new Error('NSIS application payload differs from the verified ZIP.');
+  if (preserved && (Object.keys(preserved).length !== Object.keys(extras).length ||
+      Object.entries(preserved).some(([name, hash]) => extras[name] !== hash)))
+    throw new Error('NSIS uninstaller files were removed or changed by the update.');
+  return extras;
+}
+
+export function checkNsisRegistration(value, version, key) {
+  if (value?.count !== 1 || value.key !== NSIS_PRODUCT_GUID ||
+      (key !== undefined && value.key !== key) || value.displayVersion !== version ||
+      value.uninstallMatches !== true || value.quietUninstallMatches !== true ||
+      value.uninstallerExists !== true || value.installLocationMatches !== true)
+    throw new Error('NSIS registration does not identify the installed version and existing uninstaller.');
+}
+
+export function nsisRegistrationObservation(value, startVersion, targetVersion, key) {
+  return {
+    count: Number.isInteger(value?.count) && value.count >= 0 && value.count <= 8 ? value.count : null,
+    sameEntry: key === undefined ? null : value?.key === key,
+    displayVersion: [startVersion, targetVersion].includes(value?.displayVersion) ? value.displayVersion : 'other',
+    uninstallMatches: value?.uninstallMatches === true,
+    quietUninstallMatches: value?.quietUninstallMatches === true,
+    uninstallerExists: value?.uninstallerExists === true,
+    installLocationMatches: value?.installLocationMatches === true,
+  };
 }
 
 export function requiresStableUi(expected) {

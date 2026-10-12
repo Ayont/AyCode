@@ -28,7 +28,8 @@ test('draft access has no anonymous fallback and rejects unrelated endpoints bef
 test('review workflow scopes draft credentials to download and labels the proof separately', async () => {
  const { readFile } = await import('node:fs/promises');
  const workflow = await readFile(new URL('../workflows/windows-review-upgrade.yml', import.meta.url), 'utf8');
- assert.match(workflow, /AYCODE_PROOF_KIND: review-updater/);
+ assert.ok(workflow.includes('AYCODE_PROOF_KIND: ${{ inputs.proof_kind }}'));
+ assert.match(workflow, /options: \[review-updater, review-updater-nsis\]/);
  assert.match(workflow, /persist-credentials: false/);
  assert.match(workflow, /github\.event_name == 'workflow_dispatch'.*github\.repository == 'Ayont\/AyCode'.*github\.ref == 'refs\/heads\/main'/);
  assert.equal((workflow.match(/GH_TOKEN:/g) || []).length, 1);

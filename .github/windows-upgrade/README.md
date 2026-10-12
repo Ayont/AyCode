@@ -99,3 +99,46 @@ The helper diagnostic suite separately preserves experiments reproducing the
 original detached PowerShell launch failure. The review workflow runs the package
 trust tests, install observer tests and the corrected bootstrap lifetime/abort
 tests instead of requiring that known-broken launch experiment to succeed.
+
+### NSIS-installed review
+
+The same workflow has an explicit `proof_kind: review-updater-nsis` option. The
+default `review-updater` keeps the existing ZIP-start proof. Both remain separate
+from `final-release` and require distinct pinned review and target source commits.
+
+NSIS mode additionally downloads `AyCode-Setup-7.4.6-win-x64.exe` from the exact
+review draft. Its own Ed25519-signed manifest entry, GitHub asset digest and size
+must match; the EXE is hashed again immediately before execution. A signed ZIP
+does not authorize an unsigned or different installer. Supply both Windows
+artifacts when preparing the review transport draft.
+
+Installation is permitted only in the manual Ayont/AyCode main workflow on a
+disposable GitHub-hosted Windows 2025 runner, beneath that run's exact runner.temp
+directory. The installer uses the synthetic Known Folder/profile environment and
+`/S /D=<synthetic path with spaces>`, with `/D` last and unquoted, and never
+`--force-run`. Silent one-click NSIS suppresses runAfterFinish. An unexpected
+application process after installation fails the proof. HKCU registration and
+shortcuts belong to the disposable runner account, never a real user's account;
+environment overrides do not virtualize the registry.
+Before execution, all install and uninstall keys for the fixed AyCode product
+GUID must be absent in both HKCU/HKLM and both 32/64-bit registry views, regardless
+of their paths. Existing installations at any other location therefore fail
+closed instead of being overwritten by NSIS.
+
+Before the first launch, every installed application file must equal the signed
+review ZIP. The only allowed extra files are the observed root-level
+`Uninstall AyCode.exe` (required) and `uninstallerIcon.ico` (if generated). After
+the real in-app update, every target ZIP file must still match exactly, and those
+same observed installer extras must remain byte-identical. No wildcard ignores
+or payload exceptions are allowed. The same x64 HKCU uninstall entry must still
+point to the existing synthetic uninstaller, retain the exact normal and silent
+uninstall command, and record the exact target DisplayVersion. Losing the
+uninstaller or leaving the old version in the registry fails the NSIS proof.
+The separate product key's InstallLocation must also keep naming the synthetic
+installation exactly. Failure diagnostics expose only fixed flags and the two
+expected version strings; other registry values are never printed.
+
+Real old-process exit, autonomous new-process relaunch, responding native window,
+helper completion and cold-start project persistence remain mandatory. This
+checks an NSIS-installed upgrade, not execution of the uninstaller, Authenticode,
+SmartScreen, machine-wide installation, rollback or historical 7.0.0 upgrades.
