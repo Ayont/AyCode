@@ -71,8 +71,8 @@ try {
   $stage = 'construct'
   $mainPid = [uint32]$env:AYCODE_OBSERVER_MAIN_PID
   if ($mainPid -eq 0) { throw 'invalid' }
-  $startQuery = "SELECT ProcessID, ParentProcessID, ProcessName, TIME_CREATED FROM Win32_ProcessStartTrace WHERE ParentProcessID = $mainPid AND ProcessName = 'powershell.exe'"
-  $stopQuery = "SELECT ProcessID, ParentProcessID, ProcessName, TIME_CREATED, ExitStatus FROM Win32_ProcessStopTrace WHERE ParentProcessID = $mainPid AND ProcessName = 'powershell.exe'"
+  $startQuery = "SELECT * FROM Win32_ProcessStartTrace WHERE ParentProcessID = $mainPid AND ProcessName = 'powershell.exe'"
+  $stopQuery = "SELECT * FROM Win32_ProcessStopTrace WHERE ParentProcessID = $mainPid AND ProcessName = 'powershell.exe'"
   $startWatcher = New-Object System.Management.ManagementEventWatcher
   $stopWatcher = New-Object System.Management.ManagementEventWatcher
   $startWatcher.Scope = New-Object System.Management.ManagementScope('root\CIMV2')

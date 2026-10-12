@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 import { createHelperEventState, startObserver, OBSERVER_SCRIPT } from './helper-events.mjs';
@@ -104,8 +104,8 @@ test('a lost observer or missing pair is never treated as exit zero', () => {
 });
 
 test('both WMI subscriptions are filtered before the readiness handshake', () => {
-  assert.match(OBSERVER_SCRIPT, /Win32_ProcessStartTrace WHERE ParentProcessID = \$mainPid AND ProcessName = 'powershell\.exe'/);
-  assert.match(OBSERVER_SCRIPT, /Win32_ProcessStopTrace WHERE ParentProcessID = \$mainPid AND ProcessName = 'powershell\.exe'/);
+  assert.match(OBSERVER_SCRIPT, /SELECT \* FROM Win32_ProcessStartTrace WHERE ParentProcessID = \$mainPid AND ProcessName = 'powershell\.exe'/);
+  assert.match(OBSERVER_SCRIPT, /SELECT \* FROM Win32_ProcessStopTrace WHERE ParentProcessID = \$mainPid AND ProcessName = 'powershell\.exe'/);
   assert.ok(OBSERVER_SCRIPT.indexOf('$startWatcher.Start()') < OBSERVER_SCRIPT.indexOf("kind='ready'"));
   assert.ok(OBSERVER_SCRIPT.indexOf('$stopWatcher.Start()') < OBSERVER_SCRIPT.indexOf("kind='ready'"));
   assert.doesNotMatch(OBSERVER_SCRIPT, /CommandLine|Set-Audit|auditpol|Stop-Process|taskkill|\-Action/);
@@ -119,16 +119,10 @@ test('non-Windows fails closed without spawning or touching another platform', {
 
 async function nativeFixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'aycode-helper-event-test-'));
-  const fixture = { root };
+  const fixture = { root, children: [] };
   t.after(async () => {
     const { child, observer } = fixture;
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill();
-      await new Promise(resolve => {
-        const timer = setTimeout(resolve, 1_000);
-        child.once('exit', () => { clearTimeout(timer); resolve(); });
-      });
-    }
+    await Promise.all([...new Set([...fixture.children, child].filter(Boolean))].map(stopOwnedChild));
     await observer?.dispose();
     await rm(root, { recursive: true, force: true });
   });
@@ -136,6 +130,17 @@ async function nativeFixture(t) {
   for (const key of ['HOME', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'AYCODE_USER_DATA']) await mkdir(fixture.env[key], { recursive: true });
   fixture.systemPS = win32.join(fixture.env.SystemRoot || fixture.env.SYSTEMROOT || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   return fixture;
+}
+
+async function stopOwnedChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
+  await new Promise(resolve => {
+    const finish = () => { clearTimeout(timer); child.off('exit', finish); resolve(); };
+    const timer = setTimeout(finish, 1_000);
+    child.once('exit', finish);
+    // Only the ChildProcess created by this fixture is eligible for cleanup.
+    try { child.kill(); } catch { finish(); }
+  });
 }
 
 async function ownedExitProbe(fixture) {
@@ -151,11 +156,86 @@ async function ownedExitProbe(fixture) {
   });
 }
 
-test('owned BOM PowerShell child starts with the product launch mode independently of WMI', {
-  skip: process.platform !== 'win32', timeout: 55_000,
+const LAUNCH_CASES = [
+  { name: 'baseline', detached: true, windowsHide: true, hiddenStyle: true, pipes: false },
+  { name: 'attached', detached: false, windowsHide: true, hiddenStyle: true, pipes: false },
+  { name: 'visible-startup', detached: true, windowsHide: false, hiddenStyle: true, pipes: false },
+  { name: 'no-window-style', detached: true, windowsHide: true, hiddenStyle: false, pipes: false },
+  { name: 'piped', detached: true, windowsHide: true, hiddenStyle: true, pipes: true },
+  { name: 'visible-no-window-style', detached: true, windowsHide: false, hiddenStyle: false, pipes: false },
+];
+const PROBE_MARKER = 'aycode-owned-helper-ran';
+const MARKER_SCRIPT = '\uFEFF$ErrorActionPreference = "Stop"\r\n[IO.File]::WriteAllText($env:AYCODE_HELPER_PROBE_MARKER, "aycode-owned-helper-ran")\r\nexit 37\r\n';
+
+async function launchCase(fixture, variant) {
+  const script = join(fixture.root, `${variant.name}.ps1`);
+  const marker = join(fixture.root, `${variant.name}.marker`);
+  await writeFile(script, MARKER_SCRIPT, { flag: 'wx' });
+  const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'];
+  if (variant.hiddenStyle) args.push('-WindowStyle', 'Hidden');
+  args.push('-File', script);
+  const started = performance.now();
+  let stdoutBytes = 0; let stderrBytes = 0;
+  const child = spawn(fixture.systemPS, args, {
+    env: { ...fixture.env, AYCODE_HELPER_PROBE_MARKER: marker }, cwd: fixture.root,
+    detached: variant.detached, windowsHide: variant.windowsHide,
+    stdio: variant.pipes ? ['ignore', 'pipe', 'pipe'] : 'ignore',
+  });
+  fixture.children.push(child);
+  // Count a bounded amount without retaining or emitting arbitrary PowerShell text.
+  child.stdout?.on('data', chunk => { stdoutBytes = Math.min(16_385, stdoutBytes + chunk.length); });
+  child.stderr?.on('data', chunk => { stderrBytes = Math.min(16_385, stderrBytes + chunk.length); });
+  const result = await new Promise(resolve => {
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); resolve(value);
+    };
+    const timer = setTimeout(() => finish({ state: 'timeout', code: null, signal: null }), 10_000);
+    child.once('error', () => finish({ state: 'spawn-error', code: null, signal: null }));
+    child.once('exit', (code, signal) => finish({ state: 'exited', code: Number.isSafeInteger(code) ? code : null,
+      signal: signal === null ? null : ['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGABRT'].includes(signal) ? signal : 'other' }));
+  });
+  const elapsedMs = Math.round(performance.now() - started);
+  if (result.state === 'timeout') await stopOwnedChild(child);
+  const hasMarker = async () => {
+    let handle;
+    try {
+      handle = await open(marker, 'r');
+      const bytes = Buffer.alloc(PROBE_MARKER.length + 1);
+      const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+      return bytesRead === PROBE_MARKER.length && bytes.subarray(0, bytesRead).toString('utf8') === PROBE_MARKER;
+    } catch { return false; } finally { await handle?.close().catch(() => {}); }
+  };
+  const markerAtExit = await hasMarker();
+  // A launcher may exit before an indirect child evaluates -File. Observe only
+  // this fixture's marker for two seconds; do not inspect or terminate other PIDs.
+  let markerAfterGrace = markerAtExit;
+  const graceEnd = performance.now() + 2_000;
+  while (!markerAfterGrace && performance.now() < graceEnd) {
+    await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(1, graceEnd - performance.now()))));
+    markerAfterGrace = await hasMarker();
+  }
+  const classify = bytes => bytes === 0 ? 'empty' : bytes > 16_384 ? 'overflow' : 'nonempty';
+  return { case: variant.name, ...result, markerAtExit, markerAfterGrace, elapsedMs,
+    stdout: variant.pipes ? classify(stdoutBytes) : 'not-captured',
+    stderr: variant.pipes ? classify(stderrBytes) : 'not-captured' };
+}
+
+test('owned BOM PowerShell launch matrix preserves the required product baseline independently of WMI', {
+  skip: process.platform !== 'win32', timeout: 110_000,
 }, async t => {
   const fixture = await nativeFixture(t);
-  assert.equal(await ownedExitProbe(fixture), 37, 'Owned native probe returned an unexpected exit code.');
+  const observations = [];
+  for (const variant of LAUNCH_CASES) {
+    const result = await launchCase(fixture, variant);
+    observations.push(result);
+    t.diagnostic(JSON.stringify(result));
+  }
+  const baseline = observations[0];
+  assert.equal(baseline.state, 'exited', JSON.stringify(baseline));
+  assert.equal(baseline.code, 37, JSON.stringify(baseline));
+  assert.equal(baseline.markerAtExit, true, JSON.stringify(baseline));
 });
 
 test('native WMI observes the exit status of an owned short-lived PowerShell child', {
