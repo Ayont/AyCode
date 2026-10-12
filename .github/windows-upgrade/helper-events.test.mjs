@@ -67,6 +67,33 @@ test('invalid fields, arbitrary errors and event overflow produce fixed failures
   assert.equal(state.snapshot().exitStatus, undefined);
 });
 
+test('observer setup failures expose only a fixed stage and up to four uint32 HRESULTs', () => {
+  for (const stage of ['assembly', 'construct', 'subscribe', 'start', 'queue']) {
+    const state = createHelperEventState(123);
+    state.accept({ kind: 'failed', stage, hresults: [2147749911, 2147942405, 0, 4294967295] });
+    assert.deepEqual(state.snapshot(), { state: 'failed', reason: 'observer-error', ready: false,
+      stage, hresults: [2147749911, 2147942405, 0, 4294967295] });
+  }
+  const state = createHelperEventState(123);
+  const event = { kind: 'failed', stage: 'start', hresults: [2147749911] };
+  state.accept(event); event.hresults.push(1);
+  state.snapshot().hresults.push(2);
+  assert.deepEqual(state.snapshot().hresults, [2147749911]);
+});
+
+test('failed-event schema rejects arbitrary text, extra fields and unbounded HRESULT chains', () => {
+  for (const patch of [
+    { stage: 'SECRET https://private.invalid' }, { message: 'SECRET' }, { type: 'SECRET' },
+    { hresults: ['SECRET'] }, { hresults: [-1] }, { hresults: [2 ** 32] },
+    { hresults: [1.1] }, { hresults: [0, 0, 0, 0, 0] }, { hresults: null },
+  ]) {
+    const state = createHelperEventState(123);
+    state.accept({ kind: 'failed', stage: 'start', hresults: [], ...patch });
+    assert.deepEqual(state.snapshot(), { state: 'failed', reason: 'invalid-event', ready: false });
+    assert.doesNotMatch(JSON.stringify(state.snapshot()), /SECRET|private|https/);
+  }
+});
+
 test('a lost observer or missing pair is never treated as exit zero', () => {
   const state = createHelperEventState(123); ready(state); state.accept(start());
   state.fail('SECRET');
@@ -90,12 +117,11 @@ test('non-Windows fails closed without spawning or touching another platform', {
   await observer.dispose();
 });
 
-test('native WMI observes the exit status of an owned short-lived PowerShell child', {
-  skip: process.platform !== 'win32', timeout: 110_000,
-}, async t => {
+async function nativeFixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'aycode-helper-event-test-'));
-  let observer, child;
+  const fixture = { root };
   t.after(async () => {
+    const { child, observer } = fixture;
     if (child && child.exitCode === null && child.signalCode === null) {
       child.kill();
       await new Promise(resolve => {
@@ -106,27 +132,46 @@ test('native WMI observes the exit status of an owned short-lived PowerShell chi
     await observer?.dispose();
     await rm(root, { recursive: true, force: true });
   });
-  const env = cleanEnvironment(process.env, root);
-  for (const key of ['HOME', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'AYCODE_USER_DATA']) await mkdir(env[key], { recursive: true });
-  const systemPS = win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  observer = await startObserver({ realPid: process.pid, systemPS, cleanEnv: env, syntheticRoot: root });
-  assert.equal(observer.snapshot().ready, true);
-  assert.equal(observer.snapshot().state, 'waiting');
-  const script = join(root, 'owned-exit-probe.ps1');
+  fixture.env = cleanEnvironment(process.env, root);
+  for (const key of ['HOME', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'AYCODE_USER_DATA']) await mkdir(fixture.env[key], { recursive: true });
+  fixture.systemPS = win32.join(fixture.env.SystemRoot || fixture.env.SYSTEMROOT || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return fixture;
+}
+
+async function ownedExitProbe(fixture) {
+  const script = join(fixture.root, 'owned-exit-probe.ps1');
   await writeFile(script, '\uFEFFexit 37\r\n', { flag: 'wx' });
-  child = spawn(systemPS, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script], {
-    env, detached: true, stdio: 'ignore', windowsHide: true,
+  const child = fixture.child = spawn(fixture.systemPS, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script], {
+    env: fixture.env, detached: true, stdio: 'ignore', windowsHide: true,
   });
-  const code = await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { child.kill(); reject(new Error('Owned native probe timed out.')); }, 45_000);
     child.once('error', () => { clearTimeout(timer); reject(new Error('Owned native probe failed to start.')); });
     child.once('exit', value => { clearTimeout(timer); resolve(value); });
   });
+}
+
+test('owned BOM PowerShell child starts with the product launch mode independently of WMI', {
+  skip: process.platform !== 'win32', timeout: 55_000,
+}, async t => {
+  const fixture = await nativeFixture(t);
+  assert.equal(await ownedExitProbe(fixture), 37, 'Owned native probe returned an unexpected exit code.');
+});
+
+test('native WMI observes the exit status of an owned short-lived PowerShell child', {
+  skip: process.platform !== 'win32', timeout: 110_000,
+}, async t => {
+  const fixture = await nativeFixture(t);
+  const observer = fixture.observer = await startObserver({ realPid: process.pid, systemPS: fixture.systemPS, cleanEnv: fixture.env, syntheticRoot: fixture.root });
+  const initial = observer.snapshot();
+  assert.equal(initial.ready, true, JSON.stringify(initial));
+  assert.equal(initial.state, 'waiting', JSON.stringify(initial));
+  const code = await ownedExitProbe(fixture);
   assert.equal(code, 37);
   const end = Date.now() + 10_000;
   while (Date.now() < end && observer.snapshot().state !== 'observed') await new Promise(resolve => setTimeout(resolve, 100));
   const result = observer.snapshot();
-  assert.equal(result.state, 'observed');
-  assert.equal(result.exitStatus, code);
-  assert.ok(result.lifetimeMs >= 0);
+  assert.equal(result.state, 'observed', JSON.stringify(result));
+  assert.equal(result.exitStatus, code, JSON.stringify(result));
+  assert.ok(result.lifetimeMs >= 0, JSON.stringify(result));
 });

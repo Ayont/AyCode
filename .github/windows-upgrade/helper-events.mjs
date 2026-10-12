@@ -6,11 +6,12 @@ const MAX_EVENTS = 32;
 const STARTUP_MS = 45_000;
 const LIFE_MS = 180_000;
 const REASONS = new Set(['unsupported-platform', 'invalid-context', 'startup-timeout', 'observer-error', 'invalid-event', 'event-limit', 'output-limit', 'observer-exited']);
+const STAGES = new Set(['assembly', 'construct', 'subscribe', 'start', 'queue']);
 const uint32 = value => Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff;
 
 /** Pure bounded correlation: missing/ambiguous events are not a successful helper exit. */
 export function createHelperEventState(mainPid) {
-  let ready = false, reason, ended = false, ambiguous = false, count = 0;
+  let ready = false, reason, failure, ended = false, ambiguous = false, count = 0;
   const starts = new Map(), stops = new Map();
   const fail = value => { reason ??= REASONS.has(value) ? value : 'observer-error'; };
   const accept = event => {
@@ -18,7 +19,13 @@ export function createHelperEventState(mainPid) {
     if (++count > MAX_EVENTS) { fail('event-limit'); return; }
     if (!event || typeof event !== 'object' || Array.isArray(event)) { fail('invalid-event'); return; }
     if (event.kind === 'ready' && Object.keys(event).length === 1 && !ready) { ready = true; return; }
-    if (event.kind === 'failed') { fail('observer-error'); return; }
+    if (event.kind === 'failed') {
+      if (Object.keys(event).length !== 3 || !Object.hasOwn(event, 'stage') || !Object.hasOwn(event, 'hresults') ||
+          !STAGES.has(event.stage) || !Array.isArray(event.hresults) || event.hresults.length > 4 ||
+          !Array.from(event.hresults).every(uint32)) { fail('invalid-event'); return; }
+      failure = { stage: event.stage, hresults: [...event.hresults] };
+      fail('observer-error'); return;
+    }
     if (event.kind === 'done' && Object.keys(event).length === 1) { ended = true; return; }
     const keys = event.kind === 'start' ? ['kind', 'pid', 'parent', 'timeMs']
       : event.kind === 'stop' ? ['kind', 'pid', 'parent', 'timeMs', 'exitStatus'] : [];
@@ -36,7 +43,7 @@ export function createHelperEventState(mainPid) {
     if (start && stop && stop.timeMs < start.timeMs) ambiguous = true;
   };
   const snapshot = () => {
-    if (reason) return { state: 'failed', reason, ready };
+    if (reason) return { state: 'failed', reason, ready, ...(failure ? { stage: failure.stage, hresults: [...failure.hresults] } : {}) };
     if (ambiguous) return { state: 'ambiguous', ready };
     const base = { ready, startCount: starts.size, stopCount: stops.size };
     const entry = starts.entries().next().value;
@@ -54,12 +61,14 @@ export function createHelperEventState(mainPid) {
 export const OBSERVER_SCRIPT = String.raw`$ErrorActionPreference = 'Stop'
 $startWatcher = $null
 $stopWatcher = $null
+$stage = 'assembly'
 function Emit($record) {
   [Console]::Out.WriteLine(($record | ConvertTo-Json -Compress))
   [Console]::Out.Flush()
 }
 try {
   Add-Type -AssemblyName System.Management
+  $stage = 'construct'
   $mainPid = [uint32]$env:AYCODE_OBSERVER_MAIN_PID
   if ($mainPid -eq 0) { throw 'invalid' }
   $startQuery = "SELECT ProcessID, ParentProcessID, ProcessName, TIME_CREATED FROM Win32_ProcessStartTrace WHERE ParentProcessID = $mainPid AND ProcessName = 'powershell.exe'"
@@ -70,10 +79,13 @@ try {
   $stopWatcher.Scope = New-Object System.Management.ManagementScope('root\CIMV2')
   $startWatcher.Query = New-Object System.Management.WqlEventQuery($startQuery)
   $stopWatcher.Query = New-Object System.Management.WqlEventQuery($stopQuery)
+  $stage = 'subscribe'
   $null = Register-ObjectEvent -InputObject $startWatcher -EventName EventArrived -SourceIdentifier 'aycode-helper-start'
   $null = Register-ObjectEvent -InputObject $stopWatcher -EventName EventArrived -SourceIdentifier 'aycode-helper-stop'
+  $stage = 'start'
   $startWatcher.Start()
   $stopWatcher.Start()
+  $stage = 'queue'
   Emit @{kind='ready'}
   $clock = [Diagnostics.Stopwatch]::StartNew()
   $count = 0
@@ -92,7 +104,13 @@ try {
   }
   Emit @{kind='done'}
 } catch {
-  Emit @{kind='failed'}
+  $codes = @()
+  $failure = $_.Exception
+  for ($level = 0; $level -lt 4 -and $null -ne $failure; $level++) {
+    try { $codes += [uint32]([int64]$failure.HResult -band [int64]4294967295) } catch {}
+    try { $failure = $failure.InnerException } catch { break }
+  }
+  Emit @{kind='failed';stage=$stage;hresults=@($codes)}
 } finally {
   foreach ($watcher in @($startWatcher, $stopWatcher)) {
     if ($null -ne $watcher) { try { $watcher.Stop(); $watcher.Dispose() } catch {} }
