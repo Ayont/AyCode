@@ -100,6 +100,25 @@ export function checkedRedirect(value) {
   return url;
 }
 
+function downloadFailure(url, response) {
+  const origin = url.hostname === 'api.github.com' ? 'github-api'
+    : url.hostname === 'cloud.aycode.ai' ? 'nightly-gateway' : 'github-cdn';
+  const details = [`HTTP ${response.status}`, `origin=${origin}`];
+  for (const [name, maximum] of [
+    ['x-ratelimit-remaining', 1_000_000_000],
+    ['x-ratelimit-reset', 4_294_967_295],
+    ['retry-after', 86_400],
+  ]) {
+    // Diagnostic header values are untrusted; never include free text or enumerate other headers.
+    try {
+      const value = response.headers.get(name);
+      if (typeof value === 'string' && /^(?:0|[1-9]\d{0,9})$/.test(value) && Number(value) <= maximum)
+        details.push(`${name}=${Number(value)}`);
+    } catch { /* Missing diagnostics must not replace the original HTTP failure. */ }
+  }
+  return `Public download failed (${details.join('; ')}).`;
+}
+
 export async function request(value, fetcher = fetch) {
   let url = new URL(value);
   if (
@@ -122,7 +141,7 @@ export async function request(value, fetcher = fetch) {
     if (![301, 302, 303, 307, 308].includes(response.status)) {
       if (!response.ok) {
         await response.body?.cancel();
-        throw new Error(`Public download failed (HTTP ${response.status}).`);
+        throw new Error(downloadFailure(url, response));
       }
       return response;
     }

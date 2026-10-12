@@ -125,6 +125,93 @@ test('fixed API requester refuses injected origins and never sends authorization
  for(const url of ['https://evil.test/','https://api.github.com/repos/Ayont/private/releases/1','https://cloud.aycode.ai/v1/releases/nightly/assets/0']) await assert.rejects(request(url,fetcher));
 });
 
+test('HTTP failure diagnoses only the fixed origin and bounded decimal rate headers', async () => {
+ let calls = 0;
+ const fetcher = async () => {
+  calls++;
+  return new Response('PRIVATE_RESPONSE_BODY', { status: 403, headers: {
+   'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1791764800', 'retry-after': '60',
+   Authorization: 'PRIVATE_AUTHORIZATION'
+  } });
+ };
+ await assert.rejects(request('https://api.github.com/repos/Ayont/AyCode/releases/100', fetcher), error => {
+  assert.equal(error.message, 'Public download failed (HTTP 403; origin=github-api; x-ratelimit-remaining=0; x-ratelimit-reset=1791764800; retry-after=60).');
+  return true;
+ });
+ assert.equal(calls, 1);
+});
+
+test('HTTP failure without rate headers makes no rate-limit claim', async () => {
+ await assert.rejects(request('https://api.github.com/repos/Ayont/AyCode/releases/100',
+  async () => new Response(null, { status: 403 })), error => {
+  assert.equal(error.message, 'Public download failed (HTTP 403; origin=github-api).');
+  return true;
+ });
+});
+
+test('malformed, injected and out-of-range rate headers are omitted', async () => {
+ const limits = { 'x-ratelimit-remaining': 1_000_000_000, 'x-ratelimit-reset': 4_294_967_295, 'retry-after': 86_400 };
+ for (const value of ['0\r\nSECRET', '-1', '1e3', '0x10', ' 1 ', '001', '1.5', 'SECRET', '1'.repeat(100), 1, null]) {
+  const response = { ok: false, status: 403, body: null, headers: { get: () => value } };
+  await assert.rejects(request('https://api.github.com/repos/Ayont/AyCode/releases/100', async () => response), error => {
+   assert.equal(error.message, 'Public download failed (HTTP 403; origin=github-api).');
+   return true;
+  });
+ }
+ const response = { ok: false, status: 403, body: null, headers: { get: name => String(limits[name] + 1) } };
+ await assert.rejects(request('https://api.github.com/repos/Ayont/AyCode/releases/100', async () => response),
+  { message: 'Public download failed (HTTP 403; origin=github-api).' });
+});
+
+test('HTTP diagnosis never reads sensitive headers or response body contents', async () => {
+ const accessed = [];
+ let cancelled = false;
+ const trap = () => { throw new Error('SECRET_READ_TRAP'); };
+ const response = {
+  ok: false, status: 403,
+  headers: {
+   get(name) {
+    accessed.push(name);
+    assert.ok(['x-ratelimit-remaining', 'x-ratelimit-reset', 'retry-after'].includes(name));
+    return name === 'x-ratelimit-remaining' ? '0' : null;
+   },
+   entries: trap, [Symbol.iterator]: trap, toJSON: trap,
+  },
+  body: { cancel: async () => { cancelled = true; }, [Symbol.asyncIterator]: trap },
+  text: trap, json: trap, arrayBuffer: trap,
+ };
+ Object.defineProperty(response, 'statusText', { get: trap });
+ await assert.rejects(request('https://api.github.com/repos/Ayont/AyCode/releases/100', async () => response),
+  { message: 'Public download failed (HTTP 403; origin=github-api; x-ratelimit-remaining=0).' });
+ assert.equal(cancelled, true);
+ assert.deepEqual(accessed, ['x-ratelimit-remaining', 'x-ratelimit-reset', 'retry-after']);
+});
+
+test('HTTP diagnosis classifies the nightly gateway and approved redirect CDN without exposing URLs', async () => {
+ await assert.rejects(request('https://cloud.aycode.ai/v1/releases/nightly',
+  async () => new Response(null, { status: 403 })),
+ { message: 'Public download failed (HTTP 403; origin=nightly-gateway).' });
+ let calls = 0;
+ await assert.rejects(request('https://api.github.com/repos/Ayont/AyCode/releases/assets/100', async (_url, init) => {
+  assert.equal(init.credentials, 'omit');
+  assert.equal(init.headers.Authorization, undefined);
+  return calls++ === 0
+   ? new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/PRIVATE_PATH?sig=SECRET' } })
+   : new Response(null, { status: 403 });
+ }), { message: 'Public download failed (HTTP 403; origin=github-cdn).' });
+ assert.equal(calls, 2);
+});
+
+test('successful HTTP request keeps the exact response and never reads diagnostic headers', async () => {
+ const response = { ok: true, status: 200, headers: { get() { throw new Error('UNEXPECTED_DIAGNOSTIC_READ'); } } };
+ let calls = 0;
+ assert.equal(await request('https://api.github.com/repos/Ayont/AyCode/releases/100', async () => {
+  calls++;
+  return response;
+ }), response);
+ assert.equal(calls, 1);
+});
+
 test('helper completion requires the actual successful final marker and no failure path', async () => {
  const {checkHelperLog}=await import('./verify.mjs');
  const success='2026-10-12 10:10:00 waiting for AyCode (pid 42)\r\n2026-10-12 10:10:05 updated\r\n';
