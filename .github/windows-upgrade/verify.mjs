@@ -175,6 +175,90 @@ export function nsisRegistrationObservation(value, startVersion, targetVersion, 
   };
 }
 
+export const NSIS_PHASES = Object.freeze({
+  validateHost: 'validate disposable NSIS host', readExistingRegistration: 'read existing NSIS registration',
+  validateFreshRegistration: 'validate fresh NSIS registration', beforeProcesses: 'check pre-install NSIS process absence',
+  verifyInstaller: 'reverify NSIS installer bytes', startInstaller: 'start verified silent NSIS installer',
+  waitInstaller: 'wait for silent NSIS installer exit', validateExit: 'validate silent NSIS installer exit',
+  afterProcesses: 'check silent NSIS app absence', readTree: 'read installed NSIS payload',
+  validateTree: 'validate installed NSIS payload', readRegistration: 'read installed NSIS registration',
+  validateRegistration: 'validate installed NSIS registration',
+});
+const nsisPhases = new Set(Object.values(NSIS_PHASES));
+export const isNsisPhase = value => nsisPhases.has(value);
+const nsisErrors = new Map([
+  ['NSIS requires the isolated disposable Windows 2025 review workflow.', 'host-mismatch'],
+  ['A product installation already exists or registry isolation could not be verified.', 'existing-registration'],
+  ['Synthetic NSIS installation is not fresh.', 'existing-process'],
+  ['Verified installer must remain a regular file.', 'installer-not-regular'],
+  ['Package hash/size mismatch.', 'installer-integrity'],
+  ['NSIS installation failed.', 'installer-exit-failed'],
+  ['NSIS installer timed out.', 'installer-timeout'],
+  ['Silent NSIS unexpectedly started the application.', 'unexpected-autostart'],
+  ['Unexpected link in verified application tree.', 'tree-link'],
+  ['Unexpected special file in application tree.', 'tree-special-file'],
+  ['Invalid ZIP reference for NSIS comparison.', 'invalid-reference'],
+  ['NSIS uninstaller evidence missing.', 'uninstaller-missing'],
+  ['NSIS application payload differs from the verified ZIP.', 'payload-mismatch'],
+  ['NSIS uninstaller files were removed or changed by the update.', 'uninstaller-changed'],
+  ['NSIS registration does not identify the installed version and existing uninstaller.', 'registration-mismatch'],
+]);
+const nsisCodes = new Map([
+  ['ENOENT', 'file-not-found'], ['ENOTDIR', 'not-directory'], ['EACCES', 'access-denied'], ['EPERM', 'permission-denied'],
+  ['EBUSY', 'file-busy'], ['ENOSPC', 'disk-full'], ['EINVAL', 'invalid-operation'], ['ETIMEDOUT', 'command-timeout'],
+]);
+function diagnosticField(value, key) { try { return value?.[key]; } catch { return undefined; } }
+const diagnosticNumber = (value, min, max) => Number.isSafeInteger(value) && value >= min && value <= max ? value : null;
+const diagnosticBoolean = value => typeof value === 'boolean' ? value : null;
+const diagnosticEnum = (value, allowed) => value === undefined ? 'missing' : allowed.includes(value) ? value : 'other';
+const treeCounts = ['actualFiles', 'referenceFiles', 'missingFiles', 'changedFiles', 'unexpectedFiles'];
+const treeFlags = ['executableMatches', 'asarMatches', 'uninstallerPresent', 'iconPresent'];
+
+/** Only counts/known-file equality, derived from the snapshots already required by the gate. */
+export function nsisTreeObservation(actual, reference) {
+  const names = Object.keys(actual), required = Object.keys(reference);
+  return {
+    actualFiles: names.length, referenceFiles: required.length,
+    missingFiles: required.filter(name => !Object.hasOwn(actual, name)).length,
+    changedFiles: required.filter(name => Object.hasOwn(actual, name) && actual[name] !== reference[name]).length,
+    unexpectedFiles: names.filter(name => !Object.hasOwn(reference, name) && !nsisFiles.includes(name)).length,
+    executableMatches: Object.hasOwn(actual, 'AyCode.exe') && actual['AyCode.exe'] === reference['AyCode.exe'],
+    asarMatches: Object.hasOwn(actual, 'resources/app.asar') && actual['resources/app.asar'] === reference['resources/app.asar'],
+    uninstallerPresent: Object.hasOwn(actual, 'Uninstall AyCode.exe'),
+    iconPresent: Object.hasOwn(actual, 'uninstallerIcon.ico'),
+  };
+}
+
+export function nsisDiagnosticObservation(value) {
+  const get = key => diagnosticField(value, key);
+  const phase = get('phase');
+  const error = get('error'), installer = get('installer'), registration = get('registration'), tree = get('tree');
+  const message = diagnosticField(error, 'message');
+  const commandExitCode = diagnosticNumber(diagnosticField(error, 'status'), -2147483648, 4294967295);
+  const errorClass = nsisErrors.get(message) || nsisCodes.get(diagnosticField(error, 'code')) ||
+    (commandExitCode !== null ? 'command-failed' : 'unknown');
+  const result = {
+    phase: isNsisPhase(phase) ? phase : 'other',
+    failure: { errorClass, commandExitCode },
+    installer: {
+      state: diagnosticEnum(diagnosticField(installer, 'state'), ['not-started', 'pending', 'exited', 'spawn-error']),
+      exitCode: diagnosticNumber(diagnosticField(installer, 'exitCode'), -2147483648, 4294967295),
+      signal: diagnosticField(installer, 'signal') === null ? null
+        : diagnosticEnum(diagnosticField(installer, 'signal'), ['SIGTERM', 'SIGKILL', 'SIGABRT']),
+      elapsedMs: diagnosticNumber(diagnosticField(installer, 'elapsedMs'), 0, 120000),
+    },
+    registration: { checkedKeys: diagnosticNumber(diagnosticField(registration, 'checkedKeys'), 0, 8),
+      presentKeys: diagnosticNumber(diagnosticField(registration, 'presentKeys'), 0, 8) },
+    beforeProcesses: diagnosticNumber(get('beforeProcesses'), 0, 1024),
+    afterProcesses: diagnosticNumber(get('afterProcesses'), 0, 1024),
+  };
+  if (tree !== undefined) result.tree = Object.fromEntries([
+    ...treeCounts.map(key => [key, diagnosticNumber(diagnosticField(tree, key), 0, 100000)]),
+    ...treeFlags.map(key => [key, diagnosticBoolean(diagnosticField(tree, key))]),
+  ]);
+  return result;
+}
+
 export function requiresStableUi(expected) {
   checkPhase(expected);
   return expected.proofKind !== 'pre-release-helper';

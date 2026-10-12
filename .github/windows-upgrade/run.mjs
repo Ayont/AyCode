@@ -6,7 +6,8 @@ import { mkdir, readFile, readdir, writeFile, lstat, realpath } from 'node:fs/pr
 import { dirname, join, win32 } from 'node:path';
 import { inputs, cleanEnvironment, signedManifest, checkSource, checkUpdate, checkHelperLog, requiresStableUi, upgradeRoute, checkReviewHandoff,
   installationMode, checkNsisHost, signedAssetHash, checkAssetBytes, checkNsisTree, checkNsisRegistration,
-  NSIS_PRODUCT_GUID, checkNsisFreshRegistration, nsisRegistrationObservation } from './verify.mjs';
+  NSIS_PRODUCT_GUID, checkNsisFreshRegistration, nsisRegistrationObservation,
+  NSIS_PHASES, isNsisPhase, nsisDiagnosticObservation, nsisTreeObservation } from './verify.mjs';
 import { verifyWindowsShell } from './windows-ui.mjs';
 import { installFailureClass, observeInstallRequest, observeMainIdentity, reportInstallFailure,
   verifiedMainPid, nativePidState, replacementWindows } from './install-diagnostics.mjs';
@@ -96,8 +97,10 @@ let app,
   registrationAfter,
   updatePage,
   lastUpdateStatus,
+  nsisInstallerStarted,
 
   phase = 'package verification';
+const nsisObservation = { installer: { state: 'not-started' } };
 
 const fileHash = async file => {
   const hash = createHash('sha256');
@@ -326,37 +329,66 @@ try {
 
   const targetTree = await snapshot(reference);
   if (nsis) {
-    phase = 'verified silent NSIS installation';
+    phase = NSIS_PHASES.validateHost;
     // No installer runs outside the explicit disposable workflow. /S suppresses
     // oneClick runAfterFinish; never pass --force-run. /D must be last/unquoted.
     checkNsisHost(process.env, root);
-    checkNsisFreshRegistration(existingNsisRegistration());
-    if (processes().length !== 0)
+    phase = NSIS_PHASES.readExistingRegistration;
+    nsisObservation.registration = existingNsisRegistration();
+    phase = NSIS_PHASES.validateFreshRegistration;
+    checkNsisFreshRegistration(nsisObservation.registration);
+    phase = NSIS_PHASES.beforeProcesses;
+    nsisObservation.beforeProcesses = processes().length;
+    if (nsisObservation.beforeProcesses !== 0)
       throw new Error('Synthetic NSIS installation is not fresh.');
+    phase = NSIS_PHASES.verifyInstaller;
     const setup = join(root, route.start, installerEvidence.name);
     const setupStat = await lstat(setup);
     if (!setupStat.isFile()) throw new Error('Verified installer must remain a regular file.');
     checkAssetBytes({ size: installerEvidence.size, digest: `sha256:${installerEvidence.sha256}` },
       setupStat.size, await fileHash(setup));
+    phase = NSIS_PHASES.startInstaller;
+    nsisInstallerStarted = performance.now();
     installer = spawn(setup, ['/S', `/D=${dirname(executable)}`], {
       env: environment, cwd: join(root, route.start), windowsHide: true,
       windowsVerbatimArguments: true, stdio: 'ignore'
     });
+    nsisObservation.installer = { state: 'pending' };
+    phase = NSIS_PHASES.waitInstaller;
     const exit = await deadline(new Promise((resolve, reject) => {
-      installer.once('error', reject);
-      installer.once('exit', resolve);
+      installer.once('error', error => {
+        nsisObservation.installer = { state: 'spawn-error', elapsedMs: Math.round(performance.now() - nsisInstallerStarted) };
+        reject(error);
+      });
+      installer.once('exit', (code, signal) => {
+        nsisObservation.installer = { state: 'exited', exitCode: code, signal,
+          elapsedMs: Math.round(performance.now() - nsisInstallerStarted) };
+        resolve(code);
+      });
     }), 'NSIS installer', 120_000);
     installer = undefined;
+    phase = NSIS_PHASES.validateExit;
     if (exit !== 0) throw new Error('NSIS installation failed.');
-    if (processes().length !== 0) throw new Error('Silent NSIS unexpectedly started the application.');
-    nsisExtras = checkNsisTree(await snapshot(dirname(executable)), await snapshot(startReference));
+    phase = NSIS_PHASES.afterProcesses;
+    nsisObservation.afterProcesses = processes().length;
+    if (nsisObservation.afterProcesses !== 0) throw new Error('Silent NSIS unexpectedly started the application.');
+    phase = NSIS_PHASES.readTree;
+    const installedTree = await snapshot(dirname(executable));
+    const initialReference = await snapshot(startReference);
+    phase = NSIS_PHASES.validateTree;
+    nsisObservation.tree = nsisTreeObservation(installedTree, initialReference);
+    nsisExtras = checkNsisTree(installedTree, initialReference);
+    phase = NSIS_PHASES.readRegistration;
     registrationBefore = nsisRegistration();
     console.log(`AYCODE_NSIS_BEFORE=${JSON.stringify(nsisRegistrationObservation(registrationBefore, startVersion, targetVersion))}`);
+    phase = NSIS_PHASES.validateRegistration;
     checkNsisRegistration(registrationBefore, startVersion);
   }
+  phase = 'verify starting payload identity';
   const startAsar = await fileHash(join(dirname(executable), 'resources', 'app.asar'));
   if (!targetTree['resources/app.asar'] || startAsar === targetTree['resources/app.asar'])
     throw new Error('Package payloads must differ before updating.');
+  phase = 'create synthetic project fixture';
   const fixture = join(root, 'fixture-project');
   await writeFile(join(fixture, 'README.md'), 'Temporary public Windows updater fixture.\n', {
     flag: 'wx'
@@ -597,6 +629,12 @@ try {
 } catch (error) {
   console.error(`Windows upgrade probe failed at ${phase}: ${installFailureClass(error)}`);
   process.exitCode = 1;
+  if (isNsisPhase(phase)) {
+    if (nsisObservation.installer.state === 'pending')
+      nsisObservation.installer.elapsedMs = Math.round(performance.now() - nsisInstallerStarted);
+    try { console.error(`AYCODE_NSIS_DIAGNOSTIC=${JSON.stringify(nsisDiagnosticObservation({ ...nsisObservation, phase, error }))}`); }
+    catch { /* Diagnosis must not replace the original NSIS failure. */ }
+  }
   if (isUpdatePhase(phase)) {
     await reportUpdateFailure({ phase, error, lastStatus: lastUpdateStatus,
       readStatus: () => updatePage.evaluate(() => window.aycode.updateStatus()),

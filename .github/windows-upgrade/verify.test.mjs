@@ -98,6 +98,79 @@ test('NSIS diagnostics discard unknown registry text and expose only expected ve
   uninstallMatches: false, quietUninstallMatches: true, uninstallerExists: false, installLocationMatches: false });
  assert.equal(nsisRegistrationObservation({ displayVersion: '7.4.6' }, '7.4.6', nsis.nightlyVersion).displayVersion, '7.4.6');
 });
+test('NSIS failure diagnostics identify fixed gates and never emit raw errors or paths', async () => {
+ const { NSIS_PHASES, isNsisPhase, nsisDiagnosticObservation } = await import('./verify.mjs');
+ const secret = 'TOKEN_SECRET https://private.invalid/ C:\\real\\profile';
+ for (const [message, errorClass] of [
+  ['NSIS installation failed.', 'installer-exit-failed'],
+  ['NSIS installer timed out.', 'installer-timeout'],
+  ['Silent NSIS unexpectedly started the application.', 'unexpected-autostart'],
+  ['A product installation already exists or registry isolation could not be verified.', 'existing-registration'],
+  ['NSIS application payload differs from the verified ZIP.', 'payload-mismatch'],
+  ['NSIS uninstaller evidence missing.', 'uninstaller-missing'],
+  ['NSIS registration does not identify the installed version and existing uninstaller.', 'registration-mismatch'],
+ ]) {
+  assert.equal(nsisDiagnosticObservation({ phase: NSIS_PHASES.validateTree, error: new Error(message) }).failure.errorClass, errorClass);
+ }
+ for (const phase of Object.values(NSIS_PHASES)) assert.equal(isNsisPhase(phase), true);
+ assert.equal(isNsisPhase(secret), false);
+ const result = nsisDiagnosticObservation({ phase: secret, error: { message: secret, code: secret, status: secret, stderr: secret },
+  registration: { checkedKeys: secret, presentKeys: 0, path: secret }, beforeProcesses: secret, afterProcesses: 0,
+  installer: { state: secret, exitCode: secret, signal: secret, elapsedMs: secret, command: secret }, tree: { secret } });
+ assert.equal(result.phase, 'other');
+ assert.deepEqual(result.failure, { errorClass: 'unknown', commandExitCode: null });
+ assert.deepEqual(result.installer, { state: 'other', exitCode: null, signal: 'other', elapsedMs: null });
+ assert.doesNotMatch(JSON.stringify(result), /TOKEN_SECRET|https|private|profile|stderr|command"/);
+ const hostile = new Proxy({}, { get() { throw new Error(secret); } });
+ assert.doesNotThrow(() => nsisDiagnosticObservation({ phase: hostile, error: hostile, installer: hostile, registration: hostile, tree: hostile }));
+ let reads = 0;
+ assert.equal(nsisDiagnosticObservation({ get phase() { return ++reads === 1 ? NSIS_PHASES.validateTree : secret; } }).phase,
+  NSIS_PHASES.validateTree);
+});
+test('NSIS numeric exit and existing observation values stay bounded', async () => {
+ const { nsisDiagnosticObservation } = await import('./verify.mjs');
+ const result = nsisDiagnosticObservation({ error: { status: 1 }, registration: { checkedKeys: 8, presentKeys: 0 },
+  beforeProcesses: 0, afterProcesses: 1, installer: { state: 'exited', exitCode: 3010, signal: null, elapsedMs: 1250 } });
+ assert.deepEqual(result.installer, { state: 'exited', exitCode: 3010, signal: null, elapsedMs: 1250 });
+ assert.deepEqual(result.registration, { checkedKeys: 8, presentKeys: 0 });
+ assert.equal(result.beforeProcesses, 0); assert.equal(result.afterProcesses, 1);
+ assert.deepEqual(result.failure, { errorClass: 'command-failed', commandExitCode: 1 });
+ for (const value of [-2147483649, 4294967296, NaN, Infinity, '1'])
+  assert.equal(nsisDiagnosticObservation({ installer: { state: 'exited', exitCode: value } }).installer.exitCode, null);
+ for (const value of [-1, 120001, Infinity, '10'])
+  assert.equal(nsisDiagnosticObservation({ installer: { elapsedMs: value } }).installer.elapsedMs, null);
+ assert.equal(nsisDiagnosticObservation({ error: { code: 'ENOENT', message: 'secret' } }).failure.errorClass, 'file-not-found');
+});
+test('NSIS tree diagnosis counts mismatches against the cached signed tree without printing filenames', async () => {
+ const { nsisTreeObservation, nsisDiagnosticObservation } = await import('./verify.mjs');
+ const reference = { 'AyCode.exe': 'a'.repeat(64), 'resources/app.asar': 'b'.repeat(64), 'locales/en.pak': 'c'.repeat(64) };
+ const actual = { 'AyCode.exe': 'a'.repeat(64), 'resources/app.asar': 'd'.repeat(64),
+  'Uninstall AyCode.exe': 'e'.repeat(64), 'TOKEN_SECRET': 'f'.repeat(64) };
+ const observed = nsisTreeObservation(actual, reference);
+ assert.deepEqual(observed, { actualFiles: 4, referenceFiles: 3, missingFiles: 1, changedFiles: 1, unexpectedFiles: 1,
+  executableMatches: true, asarMatches: false, uninstallerPresent: true, iconPresent: false });
+ assert.deepEqual(nsisDiagnosticObservation({ tree: observed }).tree, observed);
+ assert.doesNotMatch(JSON.stringify(observed), /TOKEN_SECRET|AyCode|locales|resources/);
+ assert.equal(nsisTreeObservation(reference, reference).unexpectedFiles, 0);
+});
+test('NSIS failure phase distinguishes native calls and records installer exit before validation', async () => {
+ const { readFile } = await import('node:fs/promises');
+ const run = await readFile(new URL('./run.mjs', import.meta.url), 'utf8');
+ for (const [name, operation] of [['readExistingRegistration', 'existingNsisRegistration()'],
+  ['validateFreshRegistration', 'checkNsisFreshRegistration('], ['startInstaller', 'spawn(setup'],
+  ['waitInstaller', "installer.once('exit'"], ['validateExit', "NSIS installation failed."],
+  ['readTree', 'snapshot(dirname(executable))'], ['validateTree', 'checkNsisTree('],
+  ['readRegistration', 'nsisRegistration()'], ['validateRegistration', 'checkNsisRegistration(']]) {
+  const start = run.indexOf(`phase = NSIS_PHASES.${name};`);
+  assert.ok(start !== -1, `missing NSIS ${name} phase`);
+  const next = run.indexOf('phase = ', start + 8);
+  assert.ok(run.slice(start, next === -1 ? undefined : next).includes(operation), `${name} must precede its operation`);
+ }
+ assert.match(run, /AYCODE_NSIS_DIAGNOSTIC=.*nsisDiagnosticObservation/);
+ assert.equal((run.match(/existingNsisRegistration\(\)/g) || []).length, 2, 'diagnosis must not add registry reads');
+ assert.match(run, /phase = 'verify starting payload identity';\s+const startAsar/);
+ assert.match(run, /phase = 'create synthetic project fixture';\s+const fixture/);
+});
 test('review workflow chooses ZIP or NSIS explicitly on a disposable Windows 2025 runner', async () => {
  const { readFile } = await import('node:fs/promises');
  const workflow = await readFile(new URL('../workflows/windows-review-upgrade.yml', import.meta.url), 'utf8');
