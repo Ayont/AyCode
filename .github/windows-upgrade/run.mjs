@@ -11,6 +11,7 @@ import { verifyWindowsShell } from './windows-ui.mjs';
 import { installFailureClass, observeInstallRequest, observeMainIdentity, reportInstallFailure,
   verifiedMainPid, nativePidState, replacementWindows } from './install-diagnostics.mjs';
 import { startObserver } from './helper-events.mjs';
+import { UPDATE_PHASES, isUpdatePhase, reportUpdateFailure } from './update-diagnostics.mjs';
 
 if (process.platform !== 'win32' || process.arch !== 'x64')
   throw new Error('Native Windows x64 required.');
@@ -93,6 +94,8 @@ let app,
   nsisExtras,
   registrationBefore,
   registrationAfter,
+  updatePage,
+  lastUpdateStatus,
 
   phase = 'package verification';
 
@@ -373,29 +376,37 @@ try {
   phase = 'native Windows first start and navigation';
   const firstStartUi = await verifyWindowsShell(app, first.page, project, { firstStart: true });
 
-  phase = route.review ? 'regular nightly upgrade from review payload' : 'regular channel switch';
+  updatePage = first.page;
   if (!route.review) {
+    phase = UPDATE_PHASES.chooseNightly;
     await deadline(first.page.evaluate(() => window.aycode.updateSettings({
       updates: { channel: 'nightly', autoCheck: false, autoDownload: false }
     })), 'Choose nightly channel');
-    await deadline(first.page.evaluate(() => window.aycode.checkForUpdates()), 'Settle nightly check');
+    phase = UPDATE_PHASES.checkNightly;
+    lastUpdateStatus = await deadline(first.page.evaluate(() => window.aycode.checkForUpdates()), 'Settle nightly check');
+    phase = UPDATE_PHASES.observeNightly;
     const nightlyStatus = await until(
-      () => first.page.evaluate(() => window.aycode.updateStatus()),
+      async () => (lastUpdateStatus = await first.page.evaluate(() => window.aycode.updateStatus())),
       value => value.channel === 'nightly' && !['idle', 'checking'].includes(value.state),
       'Nightly channel status'
     );
+    phase = UPDATE_PHASES.validateNightly;
     if (nightlyStatus.state === 'error' || nightlyStatus.currentVersion !== startVersion)
       throw new Error('The normal nightly channel check failed.');
   }
+  phase = UPDATE_PHASES.chooseTarget;
   await deadline(first.page.evaluate(channel => window.aycode.updateSettings({
     updates: { channel, autoCheck: false, autoDownload: false }
   }), route.target), 'Choose target channel');
-  await deadline(first.page.evaluate(() => window.aycode.checkForUpdates()), 'Regular update check');
+  phase = UPDATE_PHASES.checkTarget;
+  lastUpdateStatus = await deadline(first.page.evaluate(() => window.aycode.checkForUpdates()), 'Regular update check');
+  phase = UPDATE_PHASES.observeTarget;
   const offered = await until(
-    () => first.page.evaluate(() => window.aycode.updateStatus()),
+    async () => (lastUpdateStatus = await first.page.evaluate(() => window.aycode.updateStatus())),
     value => !['idle', 'checking'].includes(value.state),
     'Exact target offer'
   );
+  phase = UPDATE_PHASES.validateTarget;
   checkUpdate(offered, expected, 'available');
 
   phase = 'regular signed download';
@@ -586,6 +597,11 @@ try {
 } catch (error) {
   console.error(`Windows upgrade probe failed at ${phase}: ${installFailureClass(error)}`);
   process.exitCode = 1;
+  if (isUpdatePhase(phase)) {
+    await reportUpdateFailure({ phase, error, lastStatus: lastUpdateStatus,
+      readStatus: () => updatePage.evaluate(() => window.aycode.updateStatus()),
+      versions: { startVersion, targetVersion } });
+  }
   if (installObservation) {
     await reportInstallFailure({
       root, executable, powerShell: ps, environment, pid: installObservation.pid,

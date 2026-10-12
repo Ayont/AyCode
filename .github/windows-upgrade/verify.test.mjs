@@ -142,6 +142,28 @@ test('review handoff requires matching exact nonce markers and no cancellation o
  for (const patch of [{ ready: 'ready' }, { ready: 'a'.repeat(64)+'\n' }, { commit: 'b'.repeat(64) }, { cancelExists: true }, { pendingExists: true }, { cancelExists: undefined }])
   assert.throws(() => checkReviewHandoff({ ...markers, ...patch }));
 });
+test('normal review upgrades accept the shipped omitted channelSwitch field, never malformed flags', () => {
+ const offered = { state: 'available', channel: 'nightly', currentVersion: review.stableVersion,
+  version: review.nightlyVersion, supported: true };
+ for (const candidate of [review, nsis]) {
+  assert.doesNotThrow(() => checkUpdate(offered, candidate, 'available'));
+  assert.doesNotThrow(() => checkUpdate({ ...offered, state: 'ready', installMode: 'restart' }, candidate, 'ready'));
+  assert.doesNotThrow(() => checkUpdate({ ...offered, channelSwitch: false }, candidate, 'available'));
+  for (const flag of [true, null, 0, 1, '', 'false', {}, []])
+   assert.throws(() => checkUpdate({ ...offered, channelSwitch: flag }, candidate, 'available'));
+  for (const patch of [{ version: '7.4.8' }, { channel: 'stable' }, { supported: false },
+   { currentVersion: '7.0.0' }, { state: 'error' }])
+   assert.throws(() => checkUpdate({ ...offered, ...patch }, candidate, 'available'));
+ }
+ const stableOffer = { ...offered, channel: 'stable', currentVersion: expected.nightlyVersion,
+  version: expected.stableVersion };
+ for (const flag of [undefined, false, null, 0, 1, '', 'true', {}, []])
+  assert.throws(() => checkUpdate({ ...stableOffer, channelSwitch: flag }, expected, 'available'));
+ assert.doesNotThrow(() => checkUpdate({ ...stableOffer, channelSwitch: true }, expected, 'available'));
+ const pre = { ...expected, proofKind: 'pre-release-helper', stableVersion: '7.4.5' };
+ assert.throws(() => checkUpdate({ ...stableOffer, version: pre.stableVersion }, pre, 'available'));
+ assert.doesNotThrow(() => checkUpdate({ ...stableOffer, version: pre.stableVersion, channelSwitch: true }, pre, 'available'));
+});
 test('inputs allow normal next-patch nightly and exact identities only', () => {
  assert.deepEqual(inputs(env), expected);
  for (const [key, value] of [['AYCODE_STABLE_RELEASE_ID','001'],['AYCODE_STABLE_SOURCE_COMMIT','a'.repeat(39)],['AYCODE_NIGHTLY_SOURCE_COMMIT','a'.repeat(39)],['AYCODE_STABLE_VERSION','7.4.6-evil'],['AYCODE_NIGHTLY_VERSION','7.4.7-nightly.202610121000\n'],['AYCODE_STABLE_MANIFEST_SHA256','B'.repeat(64)]]) assert.throws(()=>inputs({...env,[key]:value}));

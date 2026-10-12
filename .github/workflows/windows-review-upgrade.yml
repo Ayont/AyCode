@@ -87,7 +87,7 @@ jobs:
       - name: Validate package boundaries and the corrected helper architecture
         # The separate diagnostic suite deliberately reproduces the old detached
         # PowerShell failure; it is not a gate for this different launch method.
-        run: node --test verify.test.mjs review-transport.test.mjs install-diagnostics.test.mjs launcher-bootstrap.test.mjs ../windows-smoke/download.test.mjs
+        run: node --test verify.test.mjs review-transport.test.mjs install-diagnostics.test.mjs launcher-bootstrap.test.mjs update-diagnostics.test.mjs ../windows-smoke/download.test.mjs
       - name: Download the exact private review and anonymous public target
         run: node prepare.mjs
         env:

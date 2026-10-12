@@ -338,12 +338,16 @@ export function cleanEnvironment(env, root) {
 
 export function checkUpdate(status, expected, state) {
   const route = upgradeRoute(expected);
+  // UpdateStatus omits channelSwitch on a normal higher-version offer.
+  const correctSwitch = route.channelSwitch
+    ? status?.channelSwitch === true
+    : status?.channelSwitch === undefined || status?.channelSwitch === false;
   if (
     status?.state !== state ||
     status.channel !== route.target ||
     status.currentVersion !== expected[route.start + 'Version'] ||
     status.version !== expected[route.target + 'Version'] ||
-    status.channelSwitch !== route.channelSwitch ||
+    !correctSwitch ||
     status.supported !== true
   )
     throw new Error('The updater did not offer the exact regular stable channel switch.');
