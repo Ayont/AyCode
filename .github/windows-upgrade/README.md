@@ -1,6 +1,6 @@
 # Native Windows in-app upgrade checks
 
-This generic black-box driver uses only already-public signed Windows packages.
+The normal release driver uses only already-public signed Windows packages.
 It contains no private product source or provider credentials. The native upgrade
 checks are prepared; a successful in-app upgrade has **not yet been measured**.
 The separate Windows package workflow checks fresh ZIP and NSIS installations.
@@ -67,3 +67,35 @@ isolation is claimed.
 `npm test` and `node --check prepare.mjs && node --check run.mjs` run without starting
 an application. Node 22.22.3, Playwright 1.63.0 and the workflow actions are pinned.
 Native success must be established by the exact successful workflow run and proof.
+
+## Corrected updater review
+
+`windows-review-upgrade.yml` is a separate manual phase, `review-updater`. It starts
+a protected GitLab review build with internal version 7.4.6 and installs the
+independently pinned public 7.4.7 Nightly through the ordinary updater. The review
+source must differ from the published target source. This does not replace or
+certify the updater in the already-published 7.4.6 packages.
+
+The starting ZIP and signed `release.json` are transported in an unpublished,
+prerelease-marked draft named `ci-windows-updater-<pipeline>`. Its ID, version,
+source, pipeline and signed manifest hash are supplied independently. Signed
+source metadata must declare `purpose: review`, `platform: windows` and the build
+job ID. The normal release verifier continues to reject review artifacts.
+
+The ephemeral GitHub token is present only in the preparation step and sent only
+to the initial fixed repository API. Redirects never carry authorization. The
+target Nightly and the application's own update download remain anonymous.
+App/helper environments still contain only the explicit synthetic allowlist.
+
+The native proof retains real old-PID exit, independent automatic replacement
+window, exact signed target file tree, successful helper log and subsequent
+cold-start project persistence. Review additionally requires one sibling
+`helper-launch-*` directory with matching 64-hex ready/commit markers and no
+cancel or pending-commit marker. The review proof is explicitly labeled
+`reviewUpdaterProof: true`, `finalReleaseProof: false`; the target Nightly still
+contains its original updater. No payload or source is patched by the driver.
+
+The helper diagnostic suite separately preserves experiments reproducing the
+original detached PowerShell launch failure. The review workflow runs the package
+trust tests, install observer tests and the corrected bootstrap lifetime/abort
+tests instead of requiring that known-broken launch experiment to succeed.

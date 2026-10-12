@@ -2,9 +2,9 @@ import { _electron } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile, lstat } from 'node:fs/promises';
 import { dirname, join, win32 } from 'node:path';
-import { inputs, cleanEnvironment, signedManifest, checkSource, checkUpdate, checkHelperLog, requiresStableUi } from './verify.mjs';
+import { inputs, cleanEnvironment, signedManifest, checkSource, checkUpdate, checkHelperLog, requiresStableUi, upgradeRoute, checkReviewHandoff } from './verify.mjs';
 import { verifyWindowsShell } from './windows-ui.mjs';
 import { installFailureClass, observeInstallRequest, observeMainIdentity, reportInstallFailure,
   verifiedMainPid, nativePidState, replacementWindows } from './install-diagnostics.mjs';
@@ -13,6 +13,9 @@ import { startObserver } from './helper-events.mjs';
 if (process.platform !== 'win32' || process.arch !== 'x64')
   throw new Error('Native Windows x64 required.');
 const expected = inputs(process.env);
+const route = upgradeRoute(expected);
+const startVersion = expected[route.start + 'Version'];
+const targetVersion = expected[route.target + 'Version'];
 const root = process.env.AYCODE_UPGRADE_ROOT;
 if (!root || !win32.isAbsolute(root))
   throw new Error('Missing isolated absolute workspace.');
@@ -70,7 +73,7 @@ const taskkill = win32.join(
   'System32', 'taskkill.exe'
 );
 const executable = join(root, 'AyCode installed with spaces', 'AyCode.exe');
-const reference = join(root, 'stable reference');
+const reference = join(root, 'target reference');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let app,
   autoPid,
@@ -240,21 +243,21 @@ try {
       throw new Error('Verified ZIP changed.');
     powerShell('Expand-Archive -LiteralPath $env:PROBE_ZIP -DestinationPath $env:PROBE_DEST', {
       PROBE_ZIP: zip,
-      PROBE_DEST: channel === 'stable' ? reference : dirname(executable)
+      PROBE_DEST: channel === route.target ? reference : dirname(executable)
     });
   }
 
-  const stableTree = await snapshot(reference);
-  const nightlyAsar = await fileHash(join(dirname(executable), 'resources', 'app.asar'));
-  if (!stableTree['resources/app.asar'] || nightlyAsar === stableTree['resources/app.asar'])
+  const targetTree = await snapshot(reference);
+  const startAsar = await fileHash(join(dirname(executable), 'resources', 'app.asar'));
+  if (!targetTree['resources/app.asar'] || startAsar === targetTree['resources/app.asar'])
     throw new Error('Package payloads must differ before updating.');
   const fixture = join(root, 'fixture-project');
   await writeFile(join(fixture, 'README.md'), 'Temporary public Windows updater fixture.\n', {
     flag: 'wx'
   });
 
-  phase = 'start verified nightly';
-  const first = await start(expected.nightlyVersion);
+  phase = 'start verified ' + (route.review ? 'review payload' : 'nightly');
+  const first = await start(startVersion);
   const project = await deadline(
     first.page.evaluate(folder => window.aycode.addProject(folder), fixture),
     'Create fixture project'
@@ -267,34 +270,28 @@ try {
   phase = 'native Windows first start and navigation';
   const firstStartUi = await verifyWindowsShell(app, first.page, project, { firstStart: true });
 
-  phase = 'regular channel switch';
-  await deadline(first.page.evaluate(() => window.aycode.updateSettings({
-    updates: {
-      channel: 'nightly',
-      autoCheck: false,
-      autoDownload: false
-    }
-  })), 'Choose nightly channel');
-  await deadline(first.page.evaluate(() => window.aycode.checkForUpdates()), 'Settle nightly check');
-  const nightlyStatus = await until(
-    () => first.page.evaluate(() => window.aycode.updateStatus()),
-    value => value.channel === 'nightly' && !['idle', 'checking'].includes(value.state),
-    'Nightly channel status'
-  );
-  if (nightlyStatus.state === 'error' || nightlyStatus.currentVersion !== expected.nightlyVersion)
-    throw new Error('The normal nightly channel check failed.');
-  await deadline(first.page.evaluate(() => window.aycode.updateSettings({
-    updates: {
-      channel: 'stable',
-      autoCheck: false,
-      autoDownload: false
-    }
-  })), 'Choose stable channel');
+  phase = route.review ? 'regular nightly upgrade from review payload' : 'regular channel switch';
+  if (!route.review) {
+    await deadline(first.page.evaluate(() => window.aycode.updateSettings({
+      updates: { channel: 'nightly', autoCheck: false, autoDownload: false }
+    })), 'Choose nightly channel');
+    await deadline(first.page.evaluate(() => window.aycode.checkForUpdates()), 'Settle nightly check');
+    const nightlyStatus = await until(
+      () => first.page.evaluate(() => window.aycode.updateStatus()),
+      value => value.channel === 'nightly' && !['idle', 'checking'].includes(value.state),
+      'Nightly channel status'
+    );
+    if (nightlyStatus.state === 'error' || nightlyStatus.currentVersion !== startVersion)
+      throw new Error('The normal nightly channel check failed.');
+  }
+  await deadline(first.page.evaluate(channel => window.aycode.updateSettings({
+    updates: { channel, autoCheck: false, autoDownload: false }
+  }), route.target), 'Choose target channel');
   await deadline(first.page.evaluate(() => window.aycode.checkForUpdates()), 'Regular update check');
   const offered = await until(
     () => first.page.evaluate(() => window.aycode.updateStatus()),
     value => !['idle', 'checking'].includes(value.state),
-    'Stable offer'
+    'Exact target offer'
   );
   checkUpdate(offered, expected, 'available');
 
@@ -308,10 +305,10 @@ try {
 
   // Independent identity check only: never alter the updater's staged files or readiness metadata.
   const downloaded = join(
-    environment.LOCALAPPDATA, 'AyCode-staging', 'updater', expected.stableVersion,
-    `AyCode-${expected.stableVersion}-win-x64.zip`
+    environment.LOCALAPPDATA, 'AyCode-staging', 'updater', targetVersion,
+    `AyCode-${targetVersion}-win-x64.zip`
   );
-  if ((await fileHash(downloaded)) !== hashes.stable)
+  if ((await fileHash(downloaded)) !== hashes[route.target])
     throw new Error('Updater downloaded a different signed release.');
 
   phase = 'real install and automatic relaunch';
@@ -360,27 +357,46 @@ try {
   if (installError && !/closed|destroyed|Target|session/i.test(installError.message))
     throw installError;
   const installedTree = await snapshot(dirname(executable));
-  if (JSON.stringify(installedTree) !== JSON.stringify(stableTree))
-    throw new Error('Installed bytes differ from verified stable ZIP.');
+  if (JSON.stringify(installedTree) !== JSON.stringify(targetTree))
+    throw new Error('Installed bytes differ from verified target ZIP.');
   await delay(3_000);
   if (!processes().some(item => item.pid === autoPid && item.window !== 0 && item.responding))
     throw new Error('Automatically relaunched window did not stay alive.');
-  const staging = join(environment.LOCALAPPDATA, 'AyCode-staging', 'updater', expected.stableVersion);
+  const staging = join(environment.LOCALAPPDATA, 'AyCode-staging', 'updater', targetVersion);
+  let helperDirectory = staging;
+  if (route.review) {
+    // The target's startup removes its version directory. The corrected helper
+    // keeps its own handoff outside that directory until it has finished.
+    const attempts = (await readdir(dirname(staging), { withFileTypes: true })).filter(entry => entry.name.startsWith('helper-launch-'));
+    if (attempts.length !== 1 || !attempts[0].isDirectory()) throw new Error('Expected one isolated helper launch attempt.');
+    helperDirectory = join(dirname(staging), attempts[0].name);
+    const marker = async name => {
+      const file = join(helperDirectory, name);
+      const stat = await lstat(file);
+      if (!stat.isFile() || stat.size !== 64) throw new Error('Invalid helper marker file.');
+      return readFile(file, 'utf8');
+    };
+    const exists = async name => {
+      try { await lstat(join(helperDirectory, name)); return true; }
+      catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+    };
+    checkReviewHandoff({ ready: await marker('helper.ready'), commit: await marker('helper.commit'),
+      cancelExists: await exists('helper.cancel'), pendingExists: await exists('helper.commit.pending') });
+  } else {
+    const acknowledgement = await readFile(join(helperDirectory, 'helper.ready'));
+    const acknowledged = (
+      acknowledgement[0] === 0xff && acknowledgement[1] === 0xfe
+        ? acknowledgement.toString('utf16le')
+        : acknowledgement.toString('utf8')
+    ).replace(/^\uFEFF/, '').trim();
+    if (acknowledged !== 'ready') throw new Error('Update helper startup acknowledgement missing.');
+  }
   const helperLog = await until(
-    () => readFile(join(staging, 'helper.log'), 'utf8'),
+    () => readFile(join(helperDirectory, 'helper.log'), 'utf8'),
     text => /(?:^|\r?\n)\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} updated(?:\r?\n|$)/.test(text),
-    'Update helper completion',
-    30_000
+    'Update helper completion', 30_000
   );
   checkHelperLog(helperLog);
-  const acknowledgement = await readFile(join(staging, 'helper.ready'));
-  const acknowledged = (
-    acknowledgement[0] === 0xff && acknowledgement[1] === 0xfe
-      ? acknowledgement.toString('utf16le')
-      : acknowledgement.toString('utf8')
-  ).replace(/^\uFEFF/, '').trim();
-  if (acknowledged !== 'ready')
-    throw new Error('Update helper startup acknowledgement missing.');
   const automatic = {
     oldPid,
     newPid: autoPid,
@@ -398,18 +414,18 @@ try {
   });
   await until(() => processes(), items => !items.some(item => item.pid === autoPid), 'Close automatic instance', 30_000);
   autoPid = undefined;
-  const second = await start(expected.stableVersion);
+  const second = await start(targetVersion);
   if (!second.boot.projects?.some(item => item.id === project.id && item.path === fixture))
     throw new Error('Project did not survive update.');
   if ((await readFile(join(fixture, 'README.md'), 'utf8')) !== 'Temporary public Windows updater fixture.\n')
     throw new Error('Fixture content changed.');
-  let stableUi = {
+  let targetUi = {
     status: 'not-applicable',
     reason: 'The pre-release helper target 7.4.5 predates the 7.4.6 Windows UI.',
   };
   if (requiresStableUi(expected)) {
-    phase = 'native Windows stable navigation after update';
-    stableUi = await verifyWindowsShell(app, second.page, project);
+    phase = 'native Windows target navigation after update';
+    targetUi = await verifyWindowsShell(app, second.page, project);
   }
   await close();
   const proof = {
@@ -419,22 +435,25 @@ try {
     platform: 'win32',
     arch: 'x64',
     signedDownloads: true,
-    regularStableChannel: true,
+    regularStableChannel: !route.review,
+    regularNightlyUpgrade: route.review,
+    reviewUpdaterProof: route.review,
     freshStaging: true,
     automaticRelaunch: automatic,
-    nativeUi: { firstStart: firstStartUi, afterUpdate: stableUi },
+    nativeUi: { firstStart: firstStartUi, afterUpdate: targetUi },
     postRelaunchColdStart: {
-      version: expected.stableVersion,
+      version: targetVersion,
       applicationPlatform: 'win32',
       engineReady: true,
       projectPreserved: true
     },
     payload: {
-      beforeAsar: nightlyAsar,
-      afterAsar: stableTree['resources/app.asar'],
-      fileCount: Object.keys(stableTree).length
+      beforeAsar: startAsar,
+      afterAsar: targetTree['resources/app.asar'],
+      fileCount: Object.keys(targetTree).length
     },
     limitations: [
+      ...(route.review ? ['tests corrected review updater only; published stable and target nightly still contain their original updater'] : []),
       ...(expected.proofKind === 'pre-release-helper'
         ? ['pre-release helper check only; the final 7.4.6 upgrade proof is still required']
         : []),
@@ -454,7 +473,7 @@ try {
   if (installObservation) {
     await reportInstallFailure({
       root, executable, powerShell: ps, environment, pid: installObservation.pid,
-      staging: join(environment.LOCALAPPDATA, 'AyCode-staging', 'updater', expected.stableVersion),
+      staging: join(environment.LOCALAPPDATA, 'AyCode-staging', 'updater', targetVersion),
       userData: environment.AYCODE_USER_DATA,
     }, installObservation);
   }

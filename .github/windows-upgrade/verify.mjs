@@ -59,7 +59,7 @@ export function inputs(env) {
 function checkPhase(expected) {
   // These release-specific bounds keep an older-stable helper check from being
   // mistaken for the final candidate proof. Inputs never come from the feed.
-  const targets = { 'pre-release-helper': '7.4.5', 'final-release': '7.4.6' };
+  const targets = { 'pre-release-helper': '7.4.5', 'final-release': '7.4.6', 'review-updater': '7.4.6' };
   if (!Object.hasOwn(targets, expected.proofKind) ||
       expected.stableVersion !== targets[expected.proofKind] ||
       !expected.nightlyVersion?.startsWith('7.4.7-nightly.'))
@@ -67,19 +67,31 @@ function checkPhase(expected) {
   if (expected.proofKind === 'final-release' &&
       expected.stableSourceCommit !== expected.nightlySourceCommit)
     throw new Error('The final stable and nightly must contain the same candidate source.');
+  if (expected.proofKind === 'review-updater' &&
+      expected.stableSourceCommit === expected.nightlySourceCommit)
+    throw new Error('The updater review must identify the corrected source separately from the published target.');
+}
+
+export function upgradeRoute(expected) {
+  checkPhase(expected);
+  const review = expected.proofKind === 'review-updater';
+  // "stable" is the versioned input slot for the private review payload only in
+  // this explicit phase. It never changes or certifies the published stable.
+  return { start: review ? 'stable' : 'nightly', target: review ? 'nightly' : 'stable', channelSwitch: !review, review };
 }
 
 export function requiresStableUi(expected) {
   checkPhase(expected);
-  return expected.proofKind === 'final-release';
+  return expected.proofKind !== 'pre-release-helper';
 }
 
 export function checkRelease(release, expected, channel) {
+  const review = upgradeRoute(expected).review && channel === 'stable';
   if (
     !['stable', 'nightly'].includes(channel) ||
-    release?.draft !== false ||
-    release.prerelease !== (channel === 'nightly') ||
-    release.tag_name !== `v${expected[channel + 'Version']}` ||
+    release?.draft !== review ||
+    release.prerelease !== (channel === 'nightly' || review) ||
+    release.tag_name !== (review ? `ci-windows-updater-${expected.stablePipelineId}` : `v${expected[channel + 'Version']}`) ||
     !Array.isArray(release.assets)
   )
     throw new Error('Release is not the exact published candidate.');
@@ -193,6 +205,7 @@ export function signedManifest(sums, signature, expectedHash, publicKey = PUBLIC
 }
 
 export function checkSource(source, expected, channel) {
+  const review = upgradeRoute(expected).review && channel === 'stable';
   if (
     !['stable', 'nightly'].includes(channel) ||
     source?.version !== expected[channel + 'Version'] ||
@@ -202,6 +215,11 @@ export function checkSource(source, expected, channel) {
     throw new Error('Signed source identity mismatch.');
   if (channel === 'nightly' && source.channel !== 'nightly')
     throw new Error('Signed nightly channel mismatch.');
+  if (review && (source.purpose !== 'review' || source.platform !== 'windows' ||
+      !exact(/^[1-9]\d{0,15}$/, String(source.job ?? '')) || !Number.isSafeInteger(Number(source.job))))
+    throw new Error('Signed Windows review provenance is missing.');
+  if (!review && source.purpose === 'review')
+    throw new Error('Review packages cannot stand in for published releases.');
 }
 
 export function cleanEnvironment(env, root) {
@@ -224,12 +242,13 @@ export function cleanEnvironment(env, root) {
 }
 
 export function checkUpdate(status, expected, state) {
+  const route = upgradeRoute(expected);
   if (
     status?.state !== state ||
-    status.channel !== 'stable' ||
-    status.currentVersion !== expected.nightlyVersion ||
-    status.version !== expected.stableVersion ||
-    status.channelSwitch !== true ||
+    status.channel !== route.target ||
+    status.currentVersion !== expected[route.start + 'Version'] ||
+    status.version !== expected[route.target + 'Version'] ||
+    status.channelSwitch !== route.channelSwitch ||
     status.supported !== true
   )
     throw new Error('The updater did not offer the exact regular stable channel switch.');
@@ -244,4 +263,10 @@ export function checkHelperLog(text) {
     /failed|restoring|could not|still running/i.test(text)
   )
     throw new Error('Update helper did not finish successfully.');
+}
+
+export function checkReviewHandoff(markers) {
+  if (!exact(/^[a-f0-9]{64}$/, markers?.ready) || markers.commit !== markers.ready ||
+      markers.cancelExists !== false || markers.pendingExists !== false)
+    throw new Error('The corrected helper handoff was not uniquely committed.');
 }

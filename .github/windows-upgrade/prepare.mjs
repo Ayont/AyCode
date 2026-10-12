@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { inputs, request, bytes, sha256, signedManifest, checkRelease, checkSource } from './verify.mjs';
+import { inputs, bytes, sha256, signedManifest, checkRelease, checkSource, upgradeRoute } from './verify.mjs';
+import { packageRequest } from './review-transport.mjs';
 
 const expected = inputs(process.env);
 const root = process.env.AYCODE_UPGRADE_ROOT;
@@ -12,6 +13,7 @@ await mkdir(root, {
 });
 
 for (const channel of ['stable', 'nightly']) {
+  const request = url => packageRequest(channel, expected, url, process.env.GH_TOKEN);
   const metadataURL = channel === 'stable'
     ? `https://api.github.com/repos/Ayont/AyCode/releases/${expected.stableReleaseId}`
     : 'https://cloud.aycode.ai/v1/releases/nightly';
@@ -111,7 +113,7 @@ for (const channel of ['stable', 'nightly']) {
   }), {
     flag: 'wx'
   });
-  console.log(`Verified public ${channel}: ${version}.`);
+  console.log(`Verified ${upgradeRoute(expected).review && channel === 'stable' ? 'private review' : 'public ' + channel}: ${version}.`);
 }
 await writeFile(join(root, 'verified-inputs.json'), JSON.stringify(expected), {
   flag: 'wx'

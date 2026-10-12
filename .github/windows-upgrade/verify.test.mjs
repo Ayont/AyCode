@@ -6,6 +6,37 @@ const expected = { proofKind: 'final-release', stableVersion: '7.4.6', nightlyVe
 const env = Object.fromEntries(Object.entries(expected).map(([k,v]) => ['AYCODE_'+k.replace(/[A-Z]/g,c=>'_'+c).toUpperCase(),v]));
 const hash = b => createHash('sha256').update(b).digest('hex');
 const stable = { id: 100, draft: false, prerelease: false, tag_name: 'v7.4.6', assets: [] };
+const review = { ...expected, proofKind: 'review-updater', stableSourceCommit: 'd'.repeat(40) };
+test('review updater direction is explicit and cannot certify the published stable updater', async () => {
+ const { upgradeRoute } = await import('./verify.mjs');
+ const values = Object.fromEntries(Object.entries(review).map(([k,v]) => ['AYCODE_'+k.replace(/[A-Z]/g,c=>'_'+c).toUpperCase(),v]));
+ assert.deepEqual(inputs(values), review);
+ assert.deepEqual(upgradeRoute(review), { start: 'stable', target: 'nightly', channelSwitch: false, review: true });
+ assert.deepEqual(upgradeRoute(expected), { start: 'nightly', target: 'stable', channelSwitch: true, review: false });
+ assert.throws(() => inputs({ ...values, AYCODE_STABLE_SOURCE_COMMIT: expected.nightlySourceCommit }));
+ assert.throws(() => inputs({ ...values, AYCODE_STABLE_VERSION: '7.4.7' }));
+ const draft = { ...stable, draft: true, prerelease: true, tag_name: 'ci-windows-updater-240' };
+ assert.doesNotThrow(() => checkRelease(draft, review, 'stable'));
+ for (const patch of [{ draft: false }, { prerelease: false }, { tag_name: 'v7.4.6' }, { id: 101 }])
+  assert.throws(() => checkRelease({ ...draft, ...patch }, review, 'stable'));
+ assert.throws(() => checkRelease(draft, expected, 'stable'));
+ const source = { version: review.stableVersion, commit: review.stableSourceCommit, pipeline: review.stablePipelineId, purpose: 'review', platform: 'windows', job: '701' };
+ assert.doesNotThrow(() => checkSource(source, review, 'stable'));
+ for (const patch of [{ purpose: 'release' }, { purpose: undefined }, { platform: 'mac' }, { job: undefined }, { commit: expected.nightlySourceCommit }])
+  assert.throws(() => checkSource({ ...source, ...patch }, review, 'stable'));
+ assert.throws(() => checkSource({ ...source, commit: expected.stableSourceCommit }, expected, 'stable'));
+ const offered = { state: 'available', channel: 'nightly', currentVersion: review.stableVersion, version: review.nightlyVersion, channelSwitch: false, supported: true };
+ assert.doesNotThrow(() => checkUpdate(offered, review, 'available'));
+ for (const patch of [{ channelSwitch: true }, { channel: 'stable' }, { version: review.stableVersion }])
+  assert.throws(() => checkUpdate({ ...offered, ...patch }, review, 'available'));
+});
+test('review handoff requires matching exact nonce markers and no cancellation or pending write', async () => {
+ const { checkReviewHandoff } = await import('./verify.mjs');
+ const markers = { ready: 'a'.repeat(64), commit: 'a'.repeat(64), cancelExists: false, pendingExists: false };
+ assert.doesNotThrow(() => checkReviewHandoff(markers));
+ for (const patch of [{ ready: 'ready' }, { ready: 'a'.repeat(64)+'\n' }, { commit: 'b'.repeat(64) }, { cancelExists: true }, { pendingExists: true }, { cancelExists: undefined }])
+  assert.throws(() => checkReviewHandoff({ ...markers, ...patch }));
+});
 test('inputs allow normal next-patch nightly and exact identities only', () => {
  assert.deepEqual(inputs(env), expected);
  for (const [key, value] of [['AYCODE_STABLE_RELEASE_ID','001'],['AYCODE_STABLE_SOURCE_COMMIT','a'.repeat(39)],['AYCODE_NIGHTLY_SOURCE_COMMIT','a'.repeat(39)],['AYCODE_STABLE_VERSION','7.4.6-evil'],['AYCODE_NIGHTLY_VERSION','7.4.7-nightly.202610121000\n'],['AYCODE_STABLE_MANIFEST_SHA256','B'.repeat(64)]]) assert.throws(()=>inputs({...env,[key]:value}));
