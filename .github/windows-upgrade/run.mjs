@@ -6,7 +6,9 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, win32 } from 'node:path';
 import { inputs, cleanEnvironment, signedManifest, checkSource, checkUpdate, checkHelperLog, requiresStableUi } from './verify.mjs';
 import { verifyWindowsShell } from './windows-ui.mjs';
-import { installFailureClass, observeInstallRequest, observeMainIdentity, reportInstallFailure } from './install-diagnostics.mjs';
+import { installFailureClass, observeInstallRequest, observeMainIdentity, reportInstallFailure,
+  verifiedMainPid, nativePidState, replacementWindows } from './install-diagnostics.mjs';
+import { startObserver } from './helper-events.mjs';
 
 if (process.platform !== 'win32' || process.arch !== 'x64')
   throw new Error('Native Windows x64 required.');
@@ -73,6 +75,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let app,
   autoPid,
   installObservation,
+  helperEvents,
 
   phase = 'package verification';
 
@@ -191,10 +194,15 @@ async function start(version) {
     throw new Error('Running version differs from verified package.');
   if (boot.platform !== 'win32')
     throw new Error('The installed application does not identify its Windows platform.');
+  // Playwright's Windows ChildProcess is a shell wrapper, not Electron's main process.
+  const identity = await deadline(app.evaluate((_electron, expectedExe) => ({
+    pid: process.pid,
+    executableMatches: process.execPath.toLowerCase() === expectedExe.toLowerCase(),
+  }), executable), 'Packaged main process identity');
   return {
     page,
     boot,
-    pid: app.process().pid
+    pid: verifiedMainPid(identity)
   };
 }
 
@@ -310,18 +318,27 @@ try {
   const previous = app;
   const oldPid = first.pid;
   let installError;
-  const mainIdentity = await observeMainIdentity(() => previous.evaluate((_electron, identity) => ({
+  const mainIdentity = await observeMainIdentity(() => previous.evaluate(({ app }, identity) => ({
     pidMatches: process.pid === identity.pid,
     executableMatches: process.execPath.toLowerCase() === identity.executable.toLowerCase(),
-  }), { pid: oldPid, executable }));
+    appExeMatches: app.getPath('exe').toLowerCase() === identity.executable.toLowerCase(),
+    userDataMatches: app.getPath('userData').toLowerCase() === identity.userData.toLowerCase(),
+    localAppDataMatches: process.env.LOCALAPPDATA?.toLowerCase() === identity.localAppData.toLowerCase(),
+    envUserDataMatches: process.env.AYCODE_USER_DATA?.toLowerCase() === identity.userData.toLowerCase(),
+  }), { pid: oldPid, executable, userData: environment.AYCODE_USER_DATA, localAppData: environment.LOCALAPPDATA }));
+  phase = 'start read-only helper observer';
+  helperEvents = await startObserver({ realPid: oldPid, systemPS: ps, cleanEnv: environment, syntheticRoot: root });
+  if (helperEvents.snapshot().state !== 'waiting' || helperEvents.snapshot().ready !== true)
+    throw new Error('Helper process observer is not ready.');
+  phase = 'real install and automatic relaunch';
   const installObserver = observeInstallRequest(first.page.evaluate(() => window.aycode.installUpdate()));
   installObservation = { observer: installObserver, child: previous.process(), pid: oldPid, mainIdentity };
   const install = installObserver.observeDeadline(deadline(installObserver.promise, 'Install request', 30_000)).catch(error => {
     installError = error;
   });
   await until(
-    () => Promise.resolve(previous.process().exitCode),
-    value => value !== null,
+    () => Promise.resolve(nativePidState(oldPid)),
+    value => value === 'absent',
     'Original application exit',
     60_000
   );
@@ -330,21 +347,11 @@ try {
   app = undefined;
   const observed = await until(
     () => processes(),
-    items => items.some(item =>
-      item.pid !== oldPid &&
-      item.path.toLowerCase() === executable.toLowerCase() &&
-      item.window !== 0 &&
-      item.responding
-    ),
+    items => replacementWindows(items, oldPid, executable).length > 0,
     'Automatic replacement window',
     120_000
   );
-  const started = observed.filter(item =>
-    item.pid !== oldPid &&
-    item.path.toLowerCase() === executable.toLowerCase() &&
-    item.window !== 0 &&
-    item.responding
-  );
+  const started = replacementWindows(observed, oldPid, executable);
   if (started.length !== 1)
     throw new Error('Ambiguous automatic relaunch.');
   autoPid = started[0].pid;
@@ -452,6 +459,11 @@ try {
     }, installObservation);
   }
 } finally {
+  if (helperEvents) {
+    console.error(`AYCODE_HELPER_EVENT_DIAGNOSTIC=${JSON.stringify(helperEvents.snapshot())}`);
+    try { await helperEvents.dispose(); }
+    catch { console.error('AYCODE_HELPER_EVENT_DIAGNOSTIC={"state":"cleanup-error"}'); }
+  }
   if (app) {
     try {
       await close();

@@ -27,6 +27,30 @@ const ERROR_CLASSES = new Set([
   'target-not-writable', 'staged-version-mismatch',
 ]);
 
+export function verifiedMainPid(identity) {
+  if (!Number.isSafeInteger(identity?.pid) || identity.pid <= 0 || identity.executableMatches !== true)
+    throw new Error('Packaged main process identity mismatch.');
+  return identity.pid;
+}
+
+export function nativePidState(pid, signalZero = (pid, signal) => process.kill(pid, signal)) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return 'invalid-pid';
+  try { signalZero(pid, 0); return 'alive'; }
+  catch (error) {
+    try {
+      if (error?.code === 'ESRCH') return 'absent';
+      if (error?.code === 'EPERM') return 'permission-denied';
+    } catch { /* An unreadable error cannot establish process absence. */ }
+    return 'read-error';
+  }
+}
+
+export function replacementWindows(items, oldPid, executable) {
+  return items.filter(item => Number.isSafeInteger(item?.pid) && item.pid > 0 && item.pid !== oldPid &&
+    typeof item.path === 'string' && item.path.toLowerCase() === executable.toLowerCase() &&
+    Number.isSafeInteger(item.window) && item.window !== 0 && item.responding === true);
+}
+
 // Only fixed classes leave this module. Never serialize Error objects or log text.
 export function installFailureClass(error) {
   try {
@@ -124,6 +148,13 @@ async function tail(file, maximum = TAIL_BYTES) {
   } finally { try { await handle?.close(); } catch { /* Read-only best effort. */ } }
 }
 
+async function presence(file) {
+  try {
+    const info = await lstat(file);
+    return { state: info.isFile() && !info.isSymbolicLink() ? 'present' : 'not-regular' };
+  } catch (error) { return { state: error?.code === 'ENOENT' ? 'missing' : 'read-error' }; }
+}
+
 function readySummary(result) {
   if (result.state !== 'read') return { state: result.state };
   const encoding = result.buffer[0] === 0xff && result.buffer[1] === 0xfe ? 'utf16le' : 'utf8';
@@ -198,7 +229,10 @@ function mainIdentitySummary(value) {
   if (value?.state && ['timeout', 'read-error'].includes(value.state)) return { state: value.state };
   if (typeof value?.pidMatches !== 'boolean' || typeof value?.executableMatches !== 'boolean')
     return { state: 'invalid-result' };
-  return { state: 'observed', pidMatches: value.pidMatches, executableMatches: value.executableMatches };
+  const result = { state: 'observed', pidMatches: value.pidMatches, executableMatches: value.executableMatches };
+  for (const key of ['appExeMatches', 'userDataMatches', 'localAppDataMatches', 'envUserDataMatches'])
+    if (typeof value[key] === 'boolean') result[key] = value[key];
+  return result;
 }
 
 export async function observeMainIdentity(read) {
@@ -227,19 +261,18 @@ export async function reportInstallFailure(context, {
       emitSafely(emit, { event: 'failure-snapshot', observerState: 'invalid-context' });
       return;
     }
-    let alive;
-    try { signalZero(context.pid); alive = 'alive'; }
-    catch (error) { alive = error?.code === 'ESRCH' ? 'absent' : error?.code === 'EPERM' ? 'permission-denied' : 'read-error'; }
+    const alive = nativePidState(context.pid, signalZero);
     const childState = {
-      pidMatches: child?.pid === context.pid,
+      pidMatchesMain: child?.pid === context.pid,
       exitState: child?.exitCode === null ? 'pending' : child?.exitCode === 0 ? 'zero' : Number.isInteger(child?.exitCode) ? 'nonzero' : 'unavailable',
       signalState: child?.signalCode === null ? 'unset' : ['SIGTERM', 'SIGKILL', 'SIGINT'].includes(child?.signalCode) ? child.signalCode : 'other',
     };
     const request = observer?.snapshot();
-    const [ready, helper, main, identity] = await Promise.all([
+    const [ready, helper, main, script, identity] = await Promise.all([
       bounded(() => tail(join(context.staging, 'helper.ready'), 512).then(readySummary)),
       bounded(() => tail(join(context.staging, 'helper.log')).then(value => logSummary(value, true))),
       bounded(() => tail(join(context.userData, 'logs', 'main.log')).then(value => logSummary(value, false))),
+      bounded(() => presence(join(context.staging, 'install.ps1'))),
       bounded(() => nativeRead(context)),
     ]);
     emitSafely(emit, {
@@ -247,8 +280,8 @@ export async function reportInstallFailure(context, {
       elapsedMs: Math.max(0, Math.round(performance.now() - started)),
       ...(request ? { install: installSummary(request) } : {}),
       ...(mainIdentity ? { mainIdentity: mainIdentitySummary(mainIdentity) } : {}),
-      child: childState, native: { signalZero: alive, identity: identitySummary(identity) },
-      files: { ready, helper, main },
+      wrapper: childState, native: { signalZero: alive, identity: identitySummary(identity) },
+      files: { ready, helper, main, script },
     });
   } catch {
     emitSafely(emit, { event: 'failure-snapshot', observerState: 'observer-error' });

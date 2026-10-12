@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   installFailureClass, observeInstallRequest, observeMainIdentity, reportInstallFailure,
+  verifiedMainPid, nativePidState, replacementWindows,
 } from './install-diagnostics.mjs';
 
 const secret = 'TOKEN_SECRET https://private.invalid/path?token=SECRET C:\\private\\profile';
@@ -86,6 +87,11 @@ test('main process identity remains an observation and discards all other return
     { state: 'observed', pidMatches: true, executableMatches: true });
   assert.deepEqual(await observeMainIdentity(async () => { throw new Error(secret); }), { state: 'read-error' });
   assert.deepEqual(await observeMainIdentity(async () => ({ pidMatches: secret, executableMatches: true })), { state: 'invalid-result' });
+  assert.deepEqual(await observeMainIdentity(async () => ({
+    pidMatches: true, executableMatches: true, appExeMatches: true,
+    userDataMatches: false, localAppDataMatches: true, envUserDataMatches: false, secret,
+  })), { state: 'observed', pidMatches: true, executableMatches: true, appExeMatches: true,
+    userDataMatches: false, localAppDataMatches: true, envUserDataMatches: false });
 });
 
 test('shipped preflight rejections map to fixed classes and discard interpolated values', () => {
@@ -168,7 +174,7 @@ test('native observer timeout is distinct from child-process exit and native liv
     nativeRead: async () => ({ state: 'timeout' }),
     emit: value => { report = value; },
   }));
-  assert.deepEqual(report.child, { pidMatches: true, exitState: 'pending', signalState: 'unset' });
+  assert.deepEqual(report.wrapper, { pidMatchesMain: true, exitState: 'pending', signalState: 'unset' });
   assert.equal(report.native.signalZero, 'alive');
   assert.equal(report.native.identity.state, 'timeout');
   await reportInstallFailure(paths, options({
@@ -177,7 +183,7 @@ test('native observer timeout is distinct from child-process exit and native liv
     nativeRead: async () => ({ alive: false, executableMatches: false }),
     emit: value => { report = value; },
   }));
-  assert.equal(report.child.exitState, 'zero');
+  assert.equal(report.wrapper.exitState, 'zero');
   assert.equal(report.native.signalZero, 'absent');
   assert.deepEqual(report.native.identity, { state: 'observed', alive: false, executableMatches: false });
 });
@@ -219,8 +225,8 @@ test('failed readers and malicious native output cannot leak text or replace ori
     assert.equal(error, original);
   }
   assert.equal(report.native.identity.state, 'invalid-result');
-  assert.equal(report.child.exitState, 'unavailable');
-  assert.equal(report.child.signalState, 'other');
+  assert.equal(report.wrapper.exitState, 'unavailable');
+  assert.equal(report.wrapper.signalState, 'other');
   await assert.doesNotReject(reportInstallFailure(paths, options({ emit: () => { throw new Error(secret); } })));
   await assert.doesNotReject(reportInstallFailure(paths, options({ nativeRead: async () => { throw new Error(secret); } })));
   assert.doesNotMatch(JSON.stringify(events), /TOKEN_SECRET|private\.invalid|C:\\/);
@@ -247,10 +253,62 @@ test('diagnostics refuse paths outside the synthetic fixture', async t => {
   assert.equal(report.observerState, 'invalid-context');
 });
 
+test('main identity requires the exact executable and a valid actual main PID', () => {
+  assert.equal(verifiedMainPid({ pid: 456, executableMatches: true }), 456);
+  for (const value of [undefined, { pid: 0, executableMatches: true },
+    { pid: 456, executableMatches: false }, { pid: 456, executableMatches: secret },
+    { pid: '456', executableMatches: true }]) assert.throws(() => verifiedMainPid(value));
+});
+
+test('wrapper exit cannot prove application exit and native reader errors fail closed', () => {
+  const wrapper = { pid: 123, exitCode: 0 };
+  const main = verifiedMainPid({ pid: 456, executableMatches: true });
+  const observed = [];
+  assert.equal(wrapper.exitCode, 0);
+  assert.equal(nativePidState(main, (pid, signal) => { observed.push([pid, signal]); }), 'alive');
+  assert.deepEqual(observed, [[456, 0]]);
+  for (const code of ['EPERM', 'EACCES', 'ETIMEDOUT', undefined]) {
+    const state = nativePidState(main, () => { const error = new Error(secret); error.code = code; throw error; });
+    assert.notEqual(state, 'absent');
+  }
+  assert.equal(nativePidState(main, () => { const error = new Error(secret); error.code = 'ESRCH'; throw error; }), 'absent');
+  assert.equal(nativePidState(-1, () => { throw new Error('must not call'); }), 'invalid-pid');
+});
+
+test('old main absence cannot make a foreign process or original PID a valid relaunch', () => {
+  const exe = 'C:\\fixture with spaces\\AyCode.exe';
+  const original = 456;
+  const valid = { pid: 789, path: exe, window: 77, responding: true };
+  assert.deepEqual(replacementWindows([valid], original, exe), [valid]);
+  for (const item of [
+    { ...valid, pid: original }, { ...valid, path: 'C:\\another\\AyCode.exe' },
+    { ...valid, path: undefined }, { ...valid, responding: false }, { ...valid, window: 0 },
+    { ...valid, window: undefined }, { ...valid, pid: 0 },
+  ]) assert.deepEqual(replacementWindows([item], original, exe), []);
+});
+
+test('wrapper state remains separate from the real PID and script existence is content-free', async t => {
+  const paths = { ...await fixture(t), pid: 456 };
+  let report;
+  await writeFile(join(paths.staging, 'install.ps1'), secret);
+  await reportInstallFailure(paths, options({
+    child: { pid: 123, exitCode: 0, signalCode: null },
+    emit: value => { report = value; },
+  }));
+  assert.equal(report.wrapper.pidMatchesMain, false);
+  assert.equal(report.wrapper.exitState, 'zero');
+  assert.equal(report.native.signalZero, 'alive');
+  assert.equal(report.files.script.state, 'present');
+  assert.doesNotMatch(JSON.stringify(report), /TOKEN_SECRET|private\.invalid|C:\\/);
+});
+
 test('run keeps the request and exit deadlines and collects diagnostics before cleanup', async () => {
   const source = await readFile(new URL('./run.mjs', import.meta.url), 'utf8');
   assert.match(source, /deadline\(installObserver\.promise, 'Install request', 30_000\)/);
-  assert.match(source, /previous\.process\(\)\.exitCode\),\s*value => value !== null,\s*'Original application exit',\s*60_000/);
+  assert.match(source, /nativePidState\(oldPid\)\),\s*value => value === 'absent',\s*'Original application exit',\s*60_000/);
+  assert.doesNotMatch(source, /pid: app\.process\(\)\.pid|previous\.process\(\)\.exitCode/);
+  assert.match(source, /verifiedMainPid\(identity\)/);
+  assert.match(source, /replacementWindows\(items, oldPid, executable\)/);
   const report = source.indexOf('await reportInstallFailure(');
   assert.ok(report > source.indexOf('} catch (error) {', source.indexOf('const proof =')));
   assert.ok(report < source.indexOf('} finally {', report));

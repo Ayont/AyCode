@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test verify.test.mjs install-diagnostics.test.mjs"
+    "test": "node --test verify.test.mjs install-diagnostics.test.mjs helper-events.test.mjs"
   },
   "dependencies": {
     "@playwright/test": "1.63.0"
