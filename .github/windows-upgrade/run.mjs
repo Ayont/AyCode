@@ -6,6 +6,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, win32 } from 'node:path';
 import { inputs, cleanEnvironment, signedManifest, checkSource, checkUpdate, checkHelperLog, requiresStableUi } from './verify.mjs';
 import { verifyWindowsShell } from './windows-ui.mjs';
+import { installFailureClass, observeInstallRequest, observeMainIdentity, reportInstallFailure } from './install-diagnostics.mjs';
 
 if (process.platform !== 'win32' || process.arch !== 'x64')
   throw new Error('Native Windows x64 required.');
@@ -71,6 +72,7 @@ const reference = join(root, 'stable reference');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let app,
   autoPid,
+  installObservation,
 
   phase = 'package verification';
 
@@ -308,7 +310,13 @@ try {
   const previous = app;
   const oldPid = first.pid;
   let installError;
-  const install = deadline(first.page.evaluate(() => window.aycode.installUpdate()), 'Install request', 30_000).catch(error => {
+  const mainIdentity = await observeMainIdentity(() => previous.evaluate((_electron, identity) => ({
+    pidMatches: process.pid === identity.pid,
+    executableMatches: process.execPath.toLowerCase() === identity.executable.toLowerCase(),
+  }), { pid: oldPid, executable }));
+  const installObserver = observeInstallRequest(first.page.evaluate(() => window.aycode.installUpdate()));
+  installObservation = { observer: installObserver, child: previous.process(), pid: oldPid, mainIdentity };
+  const install = installObserver.observeDeadline(deadline(installObserver.promise, 'Install request', 30_000)).catch(error => {
     installError = error;
   });
   await until(
@@ -434,8 +442,15 @@ try {
   });
   console.log(`AYCODE_WINDOWS_UPGRADE_PROOF=${JSON.stringify(proof)}`);
 } catch (error) {
-  console.error(`Windows upgrade probe failed at ${phase}: ${error.message}`);
+  console.error(`Windows upgrade probe failed at ${phase}: ${installFailureClass(error)}`);
   process.exitCode = 1;
+  if (installObservation) {
+    await reportInstallFailure({
+      root, executable, powerShell: ps, environment, pid: installObservation.pid,
+      staging: join(environment.LOCALAPPDATA, 'AyCode-staging', 'updater', expected.stableVersion),
+      userData: environment.AYCODE_USER_DATA,
+    }, installObservation);
+  }
 } finally {
   if (app) {
     try {
