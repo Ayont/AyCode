@@ -1,0 +1,25 @@
+# Harmless owned-process experiments only; no package downloads or publication.
+name: Windows helper diagnostics
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-helper-diagnostic
+  cancel-in-progress: false
+jobs:
+  helper:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Ayont/AyCode' && github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22.22.3'
+          package-manager-cache: false
+      - name: Observe owned helper startup, handoff and abort
+        shell: pwsh
+        run: node --test .github/windows-upgrade/launcher-bootstrap.test.mjs
