@@ -14,12 +14,22 @@ $root = $env:AYCODE_BOOTSTRAP_ROOT
 $timings = [ordered]@{}
 function Mark([string]$phase) {
   try {
-    $timings[$phase] = @{elapsedMs=[long]$clock.ElapsedMilliseconds; fixtureElapsedMs=([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [long]$env:AYCODE_BOOTSTRAP_EPOCH)}
-    [IO.File]::WriteAllText((Join-Path $root 'child.timing.json'), ($timings | ConvertTo-Json -Depth 3 -Compress))
+    if (@('entry', 'parent-handle', 'ready', 'commit-seen', 'abort-seen', 'parent-gone', 'done') -notcontains $phase) { return }
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $elapsed = ([long]$clock.ElapsedMilliseconds).ToString($culture)
+    $fixtureElapsed = ([long]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [long]$env:AYCODE_BOOTSTRAP_EPOCH)).ToString($culture)
+    $timings[$phase] = '{"elapsedMs":' + $elapsed + ',"fixtureElapsedMs":' + $fixtureElapsed + '}'
+    $json = [Text.StringBuilder]::new('{')
+    foreach ($name in $timings.Keys) {
+      if ($json.Length -gt 1) { [void]$json.Append(',') }
+      [void]$json.Append('"').Append($name).Append('":').Append($timings[$name])
+    }
+    [void]$json.Append('}')
+    [IO.File]::WriteAllText([IO.Path]::Combine($root, 'child.timing.json'), $json.ToString())
   } catch {}
 }
 Mark 'entry'
-$done = Join-Path $root 'child.done'
+$done = [IO.Path]::Combine($root, 'child.done')
 $state = 'failed'
 $parent = $null
 try {
@@ -27,22 +37,22 @@ try {
   $handle = $parent.Handle
   if ($handle -eq [IntPtr]::Zero -or $parent.HasExited) { throw 'parent-unavailable' }
   Mark 'parent-handle'
-  [IO.File]::WriteAllText((Join-Path $root 'child.ready'), 'ready')
+  [IO.File]::WriteAllText(([IO.Path]::Combine($root, 'child.ready')), 'ready')
   Mark 'ready'
   $deadline = [DateTime]::UtcNow.AddSeconds(30)
   $committed = $false
   while ([DateTime]::UtcNow -lt $deadline) {
-    if ([IO.File]::Exists((Join-Path $root 'abort'))) { Mark 'abort-seen'; $state = 'aborted'; break }
-    if (-not $committed -and [IO.File]::Exists((Join-Path $root 'commit'))) { $committed = $true; Mark 'commit-seen' }
+    if ([IO.File]::Exists(([IO.Path]::Combine($root, 'abort')))) { Mark 'abort-seen'; $state = 'aborted'; break }
+    if (-not $committed -and [IO.File]::Exists(([IO.Path]::Combine($root, 'commit')))) { $committed = $true; Mark 'commit-seen' }
     if ($parent.HasExited) {
       Mark 'parent-gone'
-      if ($committed -and -not [IO.File]::Exists((Join-Path $root 'abort'))) {
-        [IO.File]::WriteAllText((Join-Path $root 'action.marker'), 'parent-gone-after-commit')
+      if ($committed -and -not [IO.File]::Exists(([IO.Path]::Combine($root, 'abort')))) {
+        [IO.File]::WriteAllText(([IO.Path]::Combine($root, 'action.marker')), 'parent-gone-after-commit')
         $state = 'completed'
       } else { $state = 'aborted' }
       break
     }
-    Start-Sleep -Milliseconds 25
+    [Threading.Thread]::Sleep(25)
   }
   if ($state -eq 'failed') { $state = 'expired' }
 } catch { $state = 'failed' }
@@ -60,16 +70,26 @@ $root = $env:AYCODE_BOOTSTRAP_ROOT
 $timings = [ordered]@{}
 function Mark([string]$phase) {
   try {
-    $timings[$phase] = @{elapsedMs=[long]$clock.ElapsedMilliseconds; fixtureElapsedMs=([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [long]$env:AYCODE_BOOTSTRAP_EPOCH)}
-    [IO.File]::WriteAllText((Join-Path $root 'bootstrap.timing.json'), ($timings | ConvertTo-Json -Depth 3 -Compress))
+    if (@('entry', 'process-start-return', 'child-ready') -notcontains $phase) { return }
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $elapsed = ([long]$clock.ElapsedMilliseconds).ToString($culture)
+    $fixtureElapsed = ([long]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [long]$env:AYCODE_BOOTSTRAP_EPOCH)).ToString($culture)
+    $timings[$phase] = '{"elapsedMs":' + $elapsed + ',"fixtureElapsedMs":' + $fixtureElapsed + '}'
+    $json = [Text.StringBuilder]::new('{')
+    foreach ($name in $timings.Keys) {
+      if ($json.Length -gt 1) { [void]$json.Append(',') }
+      [void]$json.Append('"').Append($name).Append('":').Append($timings[$name])
+    }
+    [void]$json.Append('}')
+    [IO.File]::WriteAllText([IO.Path]::Combine($root, 'bootstrap.timing.json'), $json.ToString())
   } catch {}
 }
 Mark 'entry'
 $child = $null
 try {
-  $info = New-Object Diagnostics.ProcessStartInfo
+  $info = [Diagnostics.ProcessStartInfo]::new()
   $info.FileName = $env:AYCODE_BOOTSTRAP_PS
-  $info.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $root 'own child.ps1') + '"'
+  $info.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + ([IO.Path]::Combine($root, 'own child.ps1')) + '"'
   $info.WorkingDirectory = $root
   $info.UseShellExecute = $false
   $info.CreateNoWindow = $true
@@ -79,15 +99,15 @@ try {
   if ($handle -eq [IntPtr]::Zero) { throw 'child-unavailable' }
   $deadline = [DateTime]::UtcNow.AddSeconds(60)
   while (-not $child.HasExited -and [DateTime]::UtcNow -lt $deadline) {
-    if (-not $timings.Contains('child-ready') -and [IO.File]::Exists((Join-Path $root 'child.ready'))) { Mark 'child-ready' }
-    if ([IO.File]::Exists((Join-Path $root 'abort'))) {
+    if (-not $timings.Contains('child-ready') -and [IO.File]::Exists(([IO.Path]::Combine($root, 'child.ready')))) { Mark 'child-ready' }
+    if ([IO.File]::Exists(([IO.Path]::Combine($root, 'abort')))) {
       if (-not $child.WaitForExit(3000)) { $child.Kill(); [void]$child.WaitForExit(1000) }
       break
     }
-    Start-Sleep -Milliseconds 25
+    [Threading.Thread]::Sleep(25)
   }
 } catch {
-  [IO.File]::WriteAllText((Join-Path $root 'bootstrap.failed'), 'failed')
+  [IO.File]::WriteAllText(([IO.Path]::Combine($root, 'bootstrap.failed')), 'failed')
 } finally {
   if ($null -ne $child) {
     try { if (-not $child.HasExited) { $child.Kill(); [void]$child.WaitForExit(1000) } } catch {}
@@ -200,7 +220,7 @@ async function experiment(t, mode) {
     // Never erase the abort signal while a self-expiring child may still need it.
     const end = Date.now() + 5000;
     while (Date.now() < end && !['completed', 'aborted', 'expired', 'failed'].includes(await readFixed(root, 'child.done'))) await pause(50);
-    if (['completed', 'aborted', 'expired', 'failed'].includes(await readFixed(root, 'child.done'))) await rm(root, { recursive: true, force: true });
+    if (['completed', 'aborted', 'expired', 'failed'].includes(await readFixed(root, 'child.done'))) await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
   const env = cleanEnvironment(process.env, root);
   for (const key of ['HOME', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'AYCODE_USER_DATA']) await mkdir(env[key], { recursive: true });
@@ -245,6 +265,12 @@ async function experiment(t, mode) {
   assert.equal(result.completed, mode === 'commit', JSON.stringify(result));
   assert.equal(result.aborted, mode === 'abort', JSON.stringify(result));
 }
+
+test('native bootstrap fixtures do not autoload PowerShell cmdlets around readiness', () => {
+  for (const script of [BOOTSTRAP_SCRIPT, CHILD_SCRIPT]) {
+    assert.doesNotMatch(script, /\b(?:Join-Path|ConvertTo-Json|New-Object|Start-Sleep)\b/);
+  }
+});
 
 test('phase diagnostics retain only fixed phases and bounded numeric elapsed values', () => {
   assert.deepEqual(sanitizedTiming('parent', '{"spawn":{"elapsedMs":0,"fixtureElapsedMs":2}}'), {
