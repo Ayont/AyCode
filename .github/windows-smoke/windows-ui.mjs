@@ -33,10 +33,10 @@ export async function verifyWindowsShell(app, page, project, { firstStart = fals
 
   const navigation = page.getByRole('navigation', { name: 'Areas', exact: true });
   await expect(navigation).toBeVisible();
-  const more = navigation.getByRole('button', { name: /^More sections/ });
+  // The areas behind "More": a menu since 7.4.10 ("More areas"), a group before ("More sections").
+  const more = navigation.getByRole('button', { name: /^More (?:areas|sections)/ });
   await expect(more).toHaveAttribute('aria-expanded', 'false');
-  await expect(navigation.getByRole('button', { name: /^Graph(?:\s|$)/ })).toHaveCount(0);
-  await navigation.getByRole('button', { name: 'Projects', exact: true }).click();
+  await navigation.getByRole('button', { name: /^Projects(?:,|$)/ }).click();
   await expect(page.locator('.projects')).toBeVisible();
   await page.locator('.project-card').getByRole('button', {
     name: `New chat in ${project.name}`, exact: true,
@@ -61,13 +61,22 @@ export async function verifyWindowsShell(app, page, project, { firstStart = fals
   await expect(page.locator('.projects')).toBeVisible();
   await page.keyboard.press('Control+b');
   await expect(page.locator('.sidebar')).toBeVisible();
+  // "More" opens and closes its areas.
   await more.click();
   await expect(more).toHaveAttribute('aria-expanded', 'true');
-  await navigation.getByRole('button', { name: /^Graph(?:\s|$)/ }).click();
+  await page.keyboard.press('Escape');
+  await expect(more).toHaveAttribute('aria-expanded', 'false');
+  // The graph is one step away: an icon of the row, else an entry behind "More".
+  const graph = navigation.getByRole('button', { name: /^Graph(?:,|\s|$)/ });
+  if (await graph.count() > 0) {
+    await graph.click();
+  } else {
+    await more.click();
+    await page.getByRole('menuitem', { name: /^Graph(?:,|\s|$)/ }).click();
+  }
   await expect(page.locator('.graph-view')).toBeVisible();
   await back.click();
   await expect(page.locator('.projects')).toBeVisible();
-  await more.click();
   await expect(more).toHaveAttribute('aria-expanded', 'false');
   await assertHiddenMenu();
   return { firstStart, hiddenNativeMenu: true, languageMenuRebuild: true,
