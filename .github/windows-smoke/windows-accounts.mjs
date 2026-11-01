@@ -18,6 +18,22 @@ export function fixtureProcessExists(pid, probe = process.kill) {
   }
 }
 
+// Windows hands a freed process ID to the next process within moments. The ID alone must therefore never name a
+// file that is created exclusively: the later fixture would crash before it leaves its record. A random part follows.
+const EVIDENCE_NAME = /^(claude|codex)-\d+-[0-9a-f]{12}\.json$/;
+const FAULT_NAME = /^(claude|codex)-\d+-[0-9a-f]{12}\.txt$/;
+export const isEvidenceFilename = name => EVIDENCE_NAME.test(name);
+export const isFaultFilename = name => FAULT_NAME.test(name);
+
+/** Why no logout record exists, in a few hundred bytes: the newest evidence, fixture crashes and the app's warnings. */
+export function describeMissingLogout({ account, removalMs, rows, faults, notices }) {
+  return `No logout record for ${account} after a ${removalMs} ms removal: ${JSON.stringify({
+    evidence: rows.slice(-12).map(row => ({ mode: row.mode, pid: row.pid, account: win32.basename(String(row.accountDir)) })),
+    fixtureFaults: faults.slice(-4).map(item => `${item.file}: ${String(item.text).slice(0, 300)}`),
+    appNotices: notices.slice(-4).map(text => String(text).slice(0, 200)),
+  })}`;
+}
+
 const HOME_KEYS = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'AYCODE_USER_DATA'];
 const FORBIDDEN_ENV = /TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION|PRIVATE_KEY|API_KEY|^NODE_OPTIONS$|^ELECTRON_RUN_AS_NODE$/i;
 
@@ -65,8 +81,22 @@ function syntheticCli(config) {
   const os = require('node:os');
   const { spawn } = require('node:child_process');
   const readline = require('node:readline');
+  const crypto = require('node:crypto');
   const [provider, ...args] = process.argv.slice(2);
-  const fail = message => { process.stderr.write(`${message}\n`); process.exit(91); };
+  // Names carry the process ID and a random part: Windows reuses IDs quickly, and these files are created exclusively.
+  const unique = () => `${['claude', 'codex'].includes(provider) ? provider : 'unknown'}-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+  // Diagnostics only: the application swallows a fixture's exit code, so a crash or refusal leaves a note of its own.
+  const note = text => {
+    try { fs.writeFileSync(path.join(config.faults, `${unique()}.txt`), String(text).slice(0, 2000), { flag: 'wx' }); }
+    catch { /* a note must never change what the fixture does */ }
+  };
+  const fail = message => { note(message); process.stderr.write(`${message}\n`); process.exit(91); };
+  process.on('uncaughtException', error => {
+    const text = String(error && error.stack || error);
+    note(text);
+    process.stderr.write(`${text}\n`);
+    process.exit(97);
+  });
   const equivalent = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
   const contained = file => {
     const part = path.relative(config.root, fs.realpathSync(file));
@@ -85,7 +115,7 @@ function syntheticCli(config) {
   if (!contained(accountDir)) fail('Account folder escaped fixture.');
   const identityFile = path.join(accountDir, provider === 'claude' ? '.credentials.json' : 'auth.json');
   const record = mode => {
-    fs.writeFileSync(path.join(config.evidence, `${provider}-${process.pid}.json`), JSON.stringify({
+    fs.writeFileSync(path.join(config.evidence, `${unique()}.json`), JSON.stringify({
       nonce: config.nonce, provider, mode, pid: process.pid, parentPid: process.ppid, accountDir,
     }), { flag: 'wx' });
   };
@@ -182,11 +212,13 @@ export async function verifyWindowsAccounts(app, page, fixtureRoot) {
   const fixture = join(root, `Synthetic account CLI ${nonce}`);
   const evidence = join(fixture, 'process evidence');
   const control = join(fixture, 'control');
+  const faultNotes = join(fixture, 'fixture faults');
   await mkdir(fixture);
   await mkdir(evidence);
   await mkdir(control);
+  await mkdir(faultNotes);
   const program = join(fixture, 'synthetic account program.cjs');
-  const config = { root, home, evidence, control, nonce, homeKeys: HOME_KEYS, forbiddenEnv: FORBIDDEN_ENV.source };
+  const config = { root, home, evidence, faults: faultNotes, control, nonce, homeKeys: HOME_KEYS, forbiddenEnv: FORBIDDEN_ENV.source };
   await writeFile(program, `(${syntheticCli.toString()})(${JSON.stringify(config)});\n`, { flag: 'wx' });
   const wrappers = {};
   const defaults = {};
@@ -253,7 +285,7 @@ export async function verifyWindowsAccounts(app, page, fixtureRoot) {
   async function records() {
     const values = [];
     for (const filename of await readdir(evidence)) {
-      if (!/^(claude|codex)-\d+\.json$/.test(filename)) throw new Error('Unexpected evidence filename.');
+      if (!isEvidenceFilename(filename)) throw new Error('Unexpected evidence filename.');
       let value;
       try { value = JSON.parse(await readFile(join(evidence, filename), 'utf8')); }
       catch (error) { if (error instanceof SyntaxError) continue; throw error; }
@@ -263,16 +295,28 @@ export async function verifyWindowsAccounts(app, page, fixtureRoot) {
     }
     return values;
   }
+  // Crash and refusal notes of the fixture; read only to explain a failed check, never to accept one.
+  async function fixtureFaults() {
+    const notes = [];
+    for (const filename of await readdir(faultNotes).catch(() => [])) {
+      if (!isFaultFilename(filename)) continue;
+      notes.push({ file: filename, text: await readFile(join(faultNotes, filename), 'utf8').catch(() => '') });
+    }
+    return notes;
+  }
   const accounts = [];
   const proof = [];
   const eventKey = `__accountProbe_${nonce.replaceAll('-', '')}`;
   await bounded(page.evaluate(key => {
-    const state = { log: [], unsubscribe: null };
+    const state = { log: [], notices: [], unsubscribe: null };
     state.unsubscribe = window.aycode.onEvent(event => {
       if (event.type === 'account.login') state.log.push(event.state);
+      // Only read to explain a failed check: a failed sign-out arrives as a warning notice.
+      else if (event.type === 'notice' && typeof event.message === 'string') state.notices.push(event.message.slice(0, 300));
     });
     window[key] = state;
   }, eventKey), 'Subscribe to account login events');
+  const appNotices = () => page.evaluate(key => window[key].notices.slice(-8), eventKey).catch(() => []);
   async function waitPhase(id, phase) {
     return until(() => page.evaluate(({ key, id }) => window[key].log.filter(item => item.accountId === id),
       { key: eventKey, id }), states => {
@@ -285,6 +329,19 @@ export async function verifyWindowsAccounts(app, page, fixtureRoot) {
     assert.equal(await readFile(original.identity, 'utf8'), original.original, 'Standard identity was modified.');
     assert.equal(await readFile(original.settings, 'utf8'), original.settingsBytes, 'Standard settings were modified.');
     assert.equal(await readFile(original.skill, 'utf8'), 'The standard fixture skill must survive account removal.\n');
+  }
+  // The application signs the account out through the CLI and then deletes its folder; a failed sign-out is only a
+  // warning to it. The record must come, so wait a moment for it and, when it does not, say why instead of "falsy".
+  async function expectLogout(current, removalMs) {
+    const seen = rows => rows.some(row => row.mode === 'logout' && samePath(row.accountDir, current.dir));
+    try { await until(records, seen, 'Logout record', 8_000); }
+    catch (error) {
+      if (error.message !== 'Logout record was not observed.') throw error;
+      throw new Error(describeMissingLogout({
+        account: current.account.id, removalMs, rows: await records().catch(() => []),
+        faults: await fixtureFaults(), notices: await appNotices(),
+      }));
+    }
   }
   async function add(provider, label) {
     const account = await bounded(page.evaluate(({ provider, label }) => window.aycode.addAccount(provider, label), { provider, label }), 'Add synthetic account');
@@ -365,9 +422,11 @@ export async function verifyWindowsAccounts(app, page, fixtureRoot) {
       // Remove A while B still exists: junction removal must leave the shared
       // source intact, and logout must affect only A's synthetic credentials.
       for (const current of [pair[0], pending, pair[1]]) {
+        const removalStarted = Date.now();
         await bounded(page.evaluate(id => window.aycode.removeAccount(id), current.account.id), 'Remove synthetic account');
+        const removalMs = Date.now() - removalStarted;
         await assert.rejects(lstat(current.dir), { code: 'ENOENT' });
-        assert.ok((await records()).some(row => row.mode === 'logout' && samePath(row.accountDir, current.dir)));
+        await expectLogout(current, removalMs);
         await assertDefaults(provider);
         if (current === pair[0]) {
           const other = JSON.parse(await readFile(join(pair[1].dir, basename(defaults[provider].identity)), 'utf8'));

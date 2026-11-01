@@ -45,7 +45,10 @@ two separate account directories per provider, an unchanged synthetic default
 identity, copied settings, shared-skill junctions, post-login status and logout.
 It observes a real `cmd.exe → node.exe → node.exe` login tree before cancellation
 and requires that tree to exit before cleanup, distinguishing reused process IDs
-by creation time. Cleanup targets only command lines containing the unique random
+by creation time. The fixtures name their evidence files by process ID plus a random
+part, because Windows hands a freed ID to the next process within moments; a missing
+logout record prints the newest evidence, the fixture's own crash notes and the
+application's warnings. Cleanup targets only command lines containing the unique random
 fixture directory. The fixtures never authenticate to provider services.
 `syntheticAccounts` explicitly excludes real OAuth, Credential Manager behavior,
 account-selected chat execution and status-command timeout termination. Older
