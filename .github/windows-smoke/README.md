@@ -35,8 +35,8 @@ Earlier baselines explicitly report `appShotCapture: false`.
 
 From 7.4.6 both ZIP and NSIS also exercise the actual Windows renderer: the
 three-step introduction without installation consent, hidden native menu row
-after a language change, project-to-chat navigation, unsent draft retention,
-Back, Control+B, Alt+Left and discovery of the Graph section. The actual bootstrap
+after a language change, project-to-chat navigation (from 7.4.12 through the project's own page), unsent
+draft retention, Back, Control+B, Alt+Left and discovery of the Graph section. The actual bootstrap
 must report `win32` on every launch. No chat is sent and no model is installed.
 
 Each fresh profile then exercises the ordinary account bridge using deliberately

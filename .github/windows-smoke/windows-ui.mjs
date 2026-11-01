@@ -38,18 +38,34 @@ export async function verifyWindowsShell(app, page, project, { firstStart = fals
   await expect(more).toHaveAttribute('aria-expanded', 'false');
   await navigation.getByRole('button', { name: /^Projects(?:,|$)/ }).click();
   await expect(page.locator('.projects')).toBeVisible();
-  await page.locator('.project-card').getByRole('button', {
-    name: `New chat in ${project.name}`, exact: true,
-  }).click();
+  // Since 7.4.12 the overview lists projects as rows ("Open <name>") that open the project's page, and
+  // "New chat" sits in that page's header; before, every project card had a "New chat in <name>" button.
+  await expect(page.locator('.project-row, .project-card').first()).toBeVisible();
+  const pageFlow = (await page.locator('.project-row').count()) > 0;
+  const startChat = async () => {
+    if (pageFlow) {
+      await page.locator('.project-row').getByRole('button', { name: `Open ${project.name}`, exact: true }).click();
+      await expect(page.locator('.project-page h1')).toHaveText(project.name);
+      await page.locator('.project-page__head').getByRole('button', { name: 'New chat', exact: true }).click();
+    } else {
+      await page.locator('.project-card').getByRole('button', {
+        name: `New chat in ${project.name}`, exact: true,
+      }).click();
+    }
+  };
+  // One step back from a started chat: the project's page, or (before 7.4.12) the overview itself.
+  const oneStepBack = page.locator(pageFlow ? '.project-page' : '.projects');
+  await startChat();
   const composer = page.getByRole('textbox', { name: 'What shall we start with?', exact: true });
   await expect(composer).toBeFocused();
   await composer.fill('Local Windows navigation fixture. Do not send.');
   const back = page.locator('.sidebar__header').getByRole('button', { name: 'Back', exact: true });
   await back.click();
+  await expect(oneStepBack).toBeVisible();
+  // A second Back leaves the project's page for the overview.
+  if (pageFlow) await back.click();
   await expect(page.locator('.projects')).toBeVisible();
-  await page.locator('.project-card').getByRole('button', {
-    name: `New chat in ${project.name}`, exact: true,
-  }).click();
+  await startChat();
   await expect(composer).toHaveValue('Local Windows navigation fixture. Do not send.');
 
   // Windows' real Control shortcut must still restore a hidden sidebar, and
@@ -58,7 +74,7 @@ export async function verifyWindowsShell(app, page, project, { firstStart = fals
   await expect(page.locator('.sidebar')).toBeHidden();
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press('Alt+ArrowLeft');
-  await expect(page.locator('.projects')).toBeVisible();
+  await expect(oneStepBack).toBeVisible();
   await page.keyboard.press('Control+b');
   await expect(page.locator('.sidebar')).toBeVisible();
   // "More" opens and closes its areas.
@@ -76,7 +92,7 @@ export async function verifyWindowsShell(app, page, project, { firstStart = fals
   }
   await expect(page.locator('.graph-view')).toBeVisible();
   await back.click();
-  await expect(page.locator('.projects')).toBeVisible();
+  await expect(oneStepBack).toBeVisible();
   await expect(more).toHaveAttribute('aria-expanded', 'false');
   await assertHiddenMenu();
   return { firstStart, hiddenNativeMenu: true, languageMenuRebuild: true,
