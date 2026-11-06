@@ -1,31 +1,35 @@
 <p align="right"><b>English</b> · <a href="README.de.md">Deutsch</a></p>
 
-<p align="center">
-<a href="https://aycode.ai/"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://aycode.ai/assets/bg/hero-dusk.webp">
-  <source media="(prefers-color-scheme: light)" srcset="https://aycode.ai/assets/bg/hero-dawn.webp">
-  <img alt="A violet ribbon drifting through a painted evening sky" src="https://aycode.ai/assets/bg/hero-dusk.webp" width="100%">
-</picture></a>
-</p>
-
 <p align="center"><a href="https://aycode.ai/"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://aycode.ai/assets/brand/ribbon-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://aycode.ai/assets/brand/ribbon-light.png">
-  <img alt="AyCode" src="https://aycode.ai/assets/brand/ribbon-dark.png" width="72">
+  <img alt="AyCode" src="https://aycode.ai/assets/brand/ribbon-dark.png" width="64">
 </picture></a></p>
 
 <h1 align="center">Your coding agents.<br>In <i>one calm app</i>.</h1>
 
-<p align="center">AyCode runs Claude Code, Codex, Gemini, Grok, OpenCode and other coding agents side by side in one desktop app for Mac, Windows and Linux (beta).<br>Your Obsidian vault becomes the second brain behind their answers.</p>
+<p align="center">AyCode runs Claude Code, Codex, Antigravity, Grok, OpenCode and other coding agents side by side in one desktop app for Mac, Windows and Linux (beta).<br>Your Obsidian vault becomes the second brain behind their answers.</p>
 
 <p align="center">
-<a href="https://github.com/Ayont/AyCode/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Ayont/AyCode?label=release&color=8b5cf6&style=for-the-badge&labelColor=17151d"></a>
-<a href="https://github.com/Ayont/AyCode/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Ayont/AyCode/total?color=7444ea&style=for-the-badge&labelColor=17151d"></a>
-<a href="https://aycode.ai/#download"><img alt="macOS, Windows and Linux (beta)" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20beta-Apple%20Silicon%20%C2%B7%20x64-a78bfa?style=for-the-badge&labelColor=17151d"></a>
-<a href="https://github.com/Ayont/AyCode/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Ayont/AyCode?label=stars&color=f59e0b&style=for-the-badge&labelColor=17151d"></a>
+<a href="https://aycode.ai/#download"><img alt="Download AyCode for macOS" src="https://img.shields.io/badge/Download-macOS-7444ea?style=for-the-badge&labelColor=17151d"></a>
+<a href="https://aycode.ai/#download"><img alt="Download AyCode for Windows" src="https://img.shields.io/badge/Download-Windows-7444ea?style=for-the-badge&labelColor=17151d"></a>
+<a href="https://aycode.ai/#download"><img alt="Download AyCode for Linux (beta)" src="https://img.shields.io/badge/Download-Linux%20(beta)-7444ea?style=for-the-badge&labelColor=17151d"></a>
+<a href="https://github.com/Ayont/AyCode/stargazers"><img alt="Star AyCode on GitHub" src="https://img.shields.io/badge/%E2%AD%90%20Star-on%20GitHub-f59e0b?style=for-the-badge&labelColor=17151d"></a>
 </p>
 
-<p align="center"><a href="https://aycode.ai/"><b>Website</b></a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/#download"><b>Download</b></a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/docs/"><b>Docs</b></a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/changelog/"><b>Changelog</b></a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/#tour"><b>Film</b></a>&nbsp;&nbsp;·&nbsp; <a href="https://github.com/Ayont/AyCode/stargazers"><b>⭐ Star</b></a></p>
+<p align="center"><a href="https://aycode.ai/"><img src=".github/readme/app-hero.webp" alt="The AyCode start screen with chats in the sidebar, floating over a painted evening sky" width="100%"></a><br>
+<sub>A real screenshot of the app on an AI-generated evening sky.</sub></p>
+
+<table align="center">
+<tr>
+<td align="center" valign="top" width="25%"><h3>13+</h3><sub>coding agents in one window</sub></td>
+<td align="center" valign="top" width="25%"><h3>8</h3><sub>apps you can move in from</sub></td>
+<td align="center" valign="top" width="25%"><h3>0</h3><sub>tokens resold</sub></td>
+<td align="center" valign="top" width="25%"><h3>Free</h3><sub>for Mac, Windows and Linux (beta)</sub></td>
+</tr>
+</table>
+
+<p align="center"><a href="https://aycode.ai/"><b>Website</b></a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/docs/"><b>Docs</b></a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/changelog/"><b>Changelog</b></a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/#tour"><b>Film</b></a>&nbsp;&nbsp;·&nbsp; <a href="https://github.com/Ayont/AyCode/releases"><b>All releases</b></a></p>
 
 <br>
 
@@ -41,7 +45,7 @@
 
 <h2>What is AyCode?</h2>
 
-<p>AyCode is a desktop app (GUI) for coding agents on macOS, Windows and Linux (beta). Instead of juggling <b>Claude Code</b>, <b>OpenAI Codex</b>, <b>Antigravity with Gemini</b>, <b>Grok</b>, <b>OpenCode</b>, <b>Cline</b>, <b>Kimi Code</b> and other AI agents in separate terminal tabs, you run them side by side in one calm window: with live diffs, approvals, git worktrees, a model picker, cost tracking and your Obsidian notes as long-term memory. Agentic coding and vibe coding, without losing track.</p>
+<p>AyCode is a desktop app (GUI) for coding agents on macOS, Windows and Linux (beta). Instead of juggling <b>Claude Code</b>, <b>OpenAI Codex</b>, <b>Antigravity with Gemini</b>, <b>Grok</b>, <b>OpenCode</b>, <b>Cline</b>, <b>Kimi Code</b> and other AI agents in separate terminal tabs, you run them side by side in one calm window: with live diffs, approvals, git worktrees, project boards, a model picker, cost tracking and your Obsidian notes as long-term memory. Agentic coding and vibe coding, without losing track.</p>
 
 <h2 align="center">Built around the <i>agent</i></h2>
 <p align="center">Context, memory, review, and a way back to your work from anywhere.</p>
@@ -51,7 +55,7 @@
 <td width="50%" valign="top">
 <img src=".github/readme/feature-agents.webp" alt="The model picker with Claude and Codex models" width="100%">
 <h3>Your agents, one window</h3>
-<p>Claude Code, Codex, Gemini, Grok, OpenCode, Cline, Kimi, Pi, Z.ai and more side by side. Switch the model in the middle of a chat, or send one prompt to several and compare the answers.</p>
+<p>Claude Code, Codex, Antigravity, Grok, OpenCode, Cline, Kimi, Pi, Z.ai and more side by side. Switch the model in the middle of a chat, or send one prompt to several and compare the answers.</p>
 </td>
 <td width="50%" valign="top">
 <img src=".github/readme/feature-brain.webp" alt="The knowledge graph of an Obsidian vault" width="100%">
@@ -91,35 +95,40 @@
 <tr>
 <td width="33%" valign="top"><b>Quick chat</b><br><sub><kbd>⌥ Space</kbd> asks your agent from any app.</sub></td>
 <td width="33%" valign="top"><b>/btw</b><br><sub>A side question while the main task keeps running.</sub></td>
-<td width="33%" valign="top"><b>The Island</b><br><sub>Your agents at the Mac’s notch: who is working, who is waiting for you.</sub></td>
+<td width="33%" valign="top"><b>The Island</b><br><sub>Your agents at the Mac’s notch. Drop text, files or links on it to hand them to a chat.</sub></td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Dictation</b><br><sub>Hold right <kbd>⌥</kbd> and speak into any app; a dictionary learns your words.</sub></td>
+<td width="33%" valign="top"><b>Step into a subagent</b><br><sub>Click its name and watch it work. <kbd>Esc</kbd> takes you back.</sub></td>
+<td width="33%" valign="top"><b>Bring in an agent</b><br><sub>Hand a task to another engine. It runs in a chat of its own and reports back.</sub></td>
+<td width="33%" valign="top"><b>Project boards</b><br><sub>Every project has its own page with a board, its chats and its settings.</sub></td>
+</tr>
+<tr>
 <td width="33%" valign="top"><b>Council of five</b><br><sub>Ask the group to vote. Every Ayling answers, AyCode counts the votes.</sub></td>
+<td width="33%" valign="top"><b>Dictation</b><br><sub>Hold right <kbd>⌥</kbd> and speak into any app; a dictionary learns your words.</sub></td>
 <td width="33%" valign="top"><b>Control the computer</b><br><sub>Switch it on in a chat and the agent clicks and types for you. <kbd>Esc</kbd> stops it.</sub></td>
 </tr>
 <tr>
 <td width="33%" valign="top"><b>Move in</b><br><sub>Bring your chats from T3 Code, Cursor, Cline, Claude Code, Codex and more.</sub></td>
 <td width="33%" valign="top"><b>Team sessions</b><br><sub>Code together live; guests join in the browser.</sub></td>
-<td width="33%" valign="top"><b>Know the cost</b><br><sub>What each agent and model cost this week, with budgets you set yourself.</sub></td>
+<td width="33%" valign="top"><b>Know the cost</b><br><sub>What each agent and model costs, budgets you set yourself, and a forecast of when a limit may run out.</sub></td>
 </tr>
 <tr>
-<td width="33%" valign="top"><b>Two chats at once</b><br><sub>Side by side, or a chat in its own window.</sub></td>
-<td width="33%" valign="top"><b>iPhone & Apple Watch</b><br><sub>Read, answer and approve on the go. Beta in TestFlight.</sub></td>
-<td width="33%" valign="top"><b>Companions</b><br><sub>25 little figures react to what your agents do.</sub></td>
+<td width="33%" valign="top"><b>Three looks</b><br><sub>Margin note, Workbench or Control room reshape the main pages.</sub></td>
+<td width="33%" valign="top"><b>On your phone</b><br><sub>Read, answer and approve from iPhone and Apple Watch (beta in TestFlight) or Android.</sub></td>
+<td width="33%" valign="top"><b>Companions</b><br><sub>Little figures keep you company and react to what your agents do.</sub></td>
 </tr>
 </table>
 
 <h2 align="center">AyCode in <i>motion</i></h2>
 
-<p align="center"><a href="https://aycode.ai/#tour"><img alt="The AyCode launch film: AyCode, Stable, over an evening landscape" src="https://aycode.ai/media/aycode-stable-en-16x9.webp" width="100%"></a></p>
+<p align="center"><a href="https://aycode.ai/#tour"><img alt="The AyCode launch film: AyCode, Stable, for Mac, Windows and Linux (beta), over an evening landscape" src=".github/readme/aycode-stable-en-16x9.jpg" width="100%"></a></p>
 <p align="center"><a href="https://aycode.ai/#tour"><b>▶ Watch the film</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;1:05 on aycode.ai<br>
-<sub>The evening scenes, the voices and the music are AI-generated.<br>Linux is still in beta. On Windows 11 with Smart App Control turned on, the installer doesn’t start yet because it doesn’t carry a Windows certificate yet.</sub></p>
+<sub>The app footage is real. Evening scenes, backgrounds, voices and music are AI-generated.<br>Linux is still in beta. On Windows 11 with Smart App Control turned on, the installer doesn’t start yet because it doesn’t carry a Windows certificate yet.</sub></p>
 
 <h2 align="center">The agents you <i>already</i> use</h2>
 
-<p align="center"><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b> with Gemini · <b>Grok</b> · <b>OpenCode</b> · <b>Cline</b> · <b>Kimi Code</b> · <b>Pi</b> · <b>Mistral Vibe</b> · <b>Z.ai</b> · <b>DeepSeek</b> · <b>Hermes</b> · local models through <b>Ollama</b> or <b>LM Studio</b></p>
-<p align="center">Sign in once per provider, or add an API key. AyCode starts their official tools on your computer, so your code stays yours. <b>No tokens resold.</b></p>
+<p align="center"><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b> with Gemini · <b>Cursor</b> (preview) · <b>Grok</b> · <b>OpenCode</b> · <b>Cline</b> · <b>Kimi Code</b> · <b>Pi</b> · <b>Mistral Vibe</b> · <b>Z.ai</b> · <b>DeepSeek</b> · <b>Hermes</b> · <b>Muse Code</b> · <b>Venice</b> (chat only) · local models through <b>Ollama</b> or <b>LM Studio</b></p>
+<p align="center">Sign in once per provider, or add an API key. AyCode starts their tools on your computer, and your chosen model provider receives the prompts and context you send. <b>No tokens resold.</b></p>
 
 <a name="download"></a>
 <p align="center"><picture>
@@ -141,12 +150,13 @@
 <tr><td><b>Windows</b></td><td>Windows 10 or 11, 64-bit</td><td><code>.exe</code> installer<br><sub>or portable <code>.zip</code></sub></td></tr>
 <tr><td><b>Linux</b> (beta)</td><td>64-bit (x86_64): Ubuntu, Debian, Fedora and others</td><td><code>.AppImage</code><br><sub>or <code>.deb</code></sub></td></tr>
 <tr><td><b>iPhone & Apple Watch</b></td><td>iOS 18+ · watchOS 11+ · a reachable AyCode computer</td><td><a href="https://testflight.apple.com/join/b5zYjCHJ">Beta in TestFlight</a>, Apple’s review pending</td></tr>
+<tr><td><b>Android</b></td><td>Chats and approvals on the go · a reachable AyCode computer</td><td><code>.apk</code> in the <a href="https://github.com/Ayont/AyCode/releases/latest">latest release</a></td></tr>
 </table>
 
 </div>
 
 - <b>Mac:</b> signed with Developer ID and notarized by Apple, so it opens without a detour through System Settings.
-- <b>Windows:</b> if SmartScreen warns you, choose <i>More info → Run anyway</i>. On Windows 11 with Smart App Control turned on, the installer doesn’t start yet because it doesn’t carry a Windows certificate yet.
+- <b>Windows:</b> or in PowerShell: <code>irm https://aycode.ai/install.ps1 | iex</code>. For your account, no admin rights: the line checks the signature and installs without a warning. From the browser, SmartScreen may warn you: choose <i>More info → Run anyway</i>. On Windows 11 with Smart App Control turned on, the installer doesn’t start yet because it doesn’t carry a Windows certificate yet.
 - <b>Linux:</b> make the AppImage executable (<code>chmod +x</code>) and start it, or install the .deb with apt. Linux is still in beta.
 
 Every update is signed and verified: each release carries <code>SHA256SUMS</code> and <code>SHA256SUMS.sig</code>, and AyCode installs an update only with a valid signature.
@@ -164,12 +174,12 @@ Every update is signed and verified: each release carries <code>SHA256SUMS</code
 <h2 align="center">What’s <i>new</i></h2>
 
 <table>
-<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.5"><b>7.4.5</b></a></td><td>A sky above the sidebar, detailed usage, goal controls and agent restart without losing the chat.</td></tr>
-<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.4"><b>7.4.4</b></a></td><td>Pull-request watching, images during replies, worktree cleanup, and better Office formatting.</td></tr>
-<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.2"><b>7.4.2</b></a></td><td>The Mac app is signed with Developer ID and notarized, the iPhone and Apple Watch beta is in TestFlight, and catalog connectors start Docker only with safe switches.</td></tr>
-<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.0"><b>7.4.0</b></a></td><td>Your own AyCode account, connectors in one click, and spreadsheets that look like the Excel file.</td></tr>
-<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.3.0"><b>7.3.0</b></a></td><td>AyWork opens real Excel, CSV and Word files, a video studio cuts an agent’s video on a timeline, and videos play right in the chat.</td></tr>
-<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.2.1"><b>7.2.1</b></a></td><td>Agents that use your computer and hand off work, AyCode in English, a new look on a calm stage, and two chats side by side.</td></tr>
+<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.12"><b>7.4.12</b></a><br><sub>1 Nov</sub></td><td>Every project gets its own page with a board, three new looks, files dropped on the Mac’s Island land in a chat, and two new providers: Muse Code and Venice.</td></tr>
+<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.11"><b>7.4.11</b></a><br><sub>26 Oct</sub></td><td>A coordinator proposes a plan before agents work on a project in separate copies, skills sit right in the composer, and Duo comes to the iPhone.</td></tr>
+<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.10"><b>7.4.10</b></a><br><sub>24 Oct</sub></td><td>Step into a subagent and watch it work, a chat’s agents together in one panel across engines, a calmer sidebar, and an iPhone connection that holds with very large chats.</td></tr>
+<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.9"><b>7.4.9</b></a><br><sub>23 Oct</sub></td><td>OpenCode 2 runs again, very long chats open in pages, a chat can start from a chosen branch or an existing worktree, and a read-only review mode.</td></tr>
+<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.8"><b>7.4.8</b></a><br><sub>18 Oct</sub></td><td>Cursor as a provider (preview), GitLab projects, browser sign-in for remote connectors, and a usage forecast.</td></tr>
+<tr><td width="96" align="center"><a href="https://github.com/Ayont/AyCode/releases/tag/v7.4.6"><b>7.4.6</b></a><br><sub>11 Oct</sub></td><td>A simpler start, a clearer sidebar, AppShot on Windows, and guided phone pairing by QR code.</td></tr>
 </table>
 
 <p align="right"><a href="https://aycode.ai/changelog/"><b>All release notes →</b></a></p>
@@ -179,7 +189,19 @@ Every update is signed and verified: each release carries <code>SHA256SUMS</code
 <details>
 <summary><b>Is AyCode free?</b></summary>
 <br>
-Yes, AyCode is free to download and use. The agents run as they are signed in on your computer, or with your own API keys, and AyCode resells no tokens.
+Yes, AyCode is free to download and use. The agents run as they are signed in on your computer, or with your own API keys, and AyCode resells no tokens. Your chosen provider may charge for its services.
+<br><br>
+</details>
+<details>
+<summary><b>Which coding agents does AyCode support?</b></summary>
+<br>
+Claude Code, Codex, Antigravity with Gemini, Grok, OpenCode, Cline, Kimi Code, Pi, Mistral Vibe, Z.ai, DeepSeek, Hermes, Muse Code and local models through Ollama or LM Studio, each in its own chat or side by side. Cursor runs as a preview, and Venice adds hosted chat models.
+<br><br>
+</details>
+<details>
+<summary><b>How is AyCode different from running the agents in a terminal?</b></summary>
+<br>
+AyCode starts the same official tools, signed in the way they are on your computer. Around them you get one window: live diffs and approvals, git worktrees, project boards, your notes as memory, usage and limits at a glance, and your phone as the remote.
 <br><br>
 </details>
 <details>
@@ -191,7 +213,7 @@ No. The source code is private. This repository hosts the installers, the update
 <details>
 <summary><b>Does my code leave my computer?</b></summary>
 <br>
-The agents run on your computer through their official tools, and your prompts go only to the provider you chose. AyCode Cloud is optional: it carries the phone connection on the go, end-to-end encrypted backups and team sessions.
+The agent tools run on your computer. When you use a remote model, its provider receives your prompts and any code or notes included in them. AyCode Cloud is optional: it carries the phone connection on the go, end-to-end encrypted backups and team sessions.
 <br><br>
 </details>
 <details>
@@ -203,7 +225,7 @@ No. AyCode reads an Obsidian vault if you have one and works fine without.
 <details>
 <summary><b>Which systems does it run on?</b></summary>
 <br>
-Macs with Apple Silicon, Windows 10 and 11, and 64-bit Linux as a beta (AppImage or .deb). The iPhone and Apple Watch companion is in TestFlight, pending Apple’s review, and connects to your running AyCode computer.
+Macs with Apple Silicon, Windows 10 and 11, and 64-bit Linux as a beta (AppImage or .deb). The iPhone and Apple Watch companion is in TestFlight, pending Apple’s review, and the Android companion comes as an APK in the latest release. Both connect to your running AyCode computer.
 <br><br>
 </details>
 <details>
@@ -215,9 +237,10 @@ Macs with Apple Silicon, Windows 10 and 11, and 64-bit Linux as a beta (AppImage
 
 <br>
 
-<p align="center">If AyCode helps you, a <a href="https://github.com/Ayont/AyCode/stargazers"><b>⭐ star</b></a> helps others find it.</p>
+<p align="center"><a href="https://github.com/Ayont/AyCode/stargazers"><img alt="Star AyCode on GitHub" src="https://img.shields.io/badge/%E2%AD%90%20Star-on%20GitHub-f59e0b?style=for-the-badge&labelColor=17151d"></a></p>
+<p align="center">If AyCode saves you a few terminal tabs, a <b>⭐ star</b> helps other developers find it.<br><sub>Want to hear about every release? Choose <b>Watch → Custom → Releases</b> at the top of this page.</sub></p>
 
-<p align="center"><sub><b>Tell a friend:</b>&nbsp; <a href="https://x.com/intent/post?text=AyCode%3A%20your%20AI%20coding%20agents%20(Claude%20Code%2C%20Codex%2C%20Gemini%2C%20Grok%2C%20OpenCode%20%E2%80%A6)%20in%20one%20calm%20desktop%20app&url=https%3A%2F%2Fgithub.com%2FAyont%2FAyCode">X</a>&nbsp;&nbsp;·&nbsp; <a href="https://www.reddit.com/submit?url=https%3A%2F%2Fgithub.com%2FAyont%2FAyCode&title=AyCode%3A%20your%20AI%20coding%20agents%20(Claude%20Code%2C%20Codex%2C%20Gemini%2C%20Grok%2C%20OpenCode%20%E2%80%A6)%20in%20one%20calm%20desktop%20app">Reddit</a>&nbsp;&nbsp;·&nbsp; <a href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fgithub.com%2FAyont%2FAyCode&t=AyCode%3A%20your%20AI%20coding%20agents%20(Claude%20Code%2C%20Codex%2C%20Gemini%2C%20Grok%2C%20OpenCode%20%E2%80%A6)%20in%20one%20calm%20desktop%20app">Hacker News</a>&nbsp;&nbsp;·&nbsp; <a href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2FAyont%2FAyCode">LinkedIn</a></sub></p>
+<p align="center"><sub><b>Tell a friend:</b>&nbsp; <a href="https://x.com/intent/post?text=AyCode%3A%20your%20AI%20coding%20agents%20(Claude%20Code%2C%20Codex%2C%20Antigravity%2C%20Grok%2C%20OpenCode%20%E2%80%A6)%20in%20one%20calm%20desktop%20app&url=https%3A%2F%2Fgithub.com%2FAyont%2FAyCode">X</a>&nbsp;&nbsp;·&nbsp; <a href="https://www.reddit.com/submit?url=https%3A%2F%2Fgithub.com%2FAyont%2FAyCode&title=AyCode%3A%20your%20AI%20coding%20agents%20(Claude%20Code%2C%20Codex%2C%20Antigravity%2C%20Grok%2C%20OpenCode%20%E2%80%A6)%20in%20one%20calm%20desktop%20app">Reddit</a>&nbsp;&nbsp;·&nbsp; <a href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fgithub.com%2FAyont%2FAyCode&t=AyCode%3A%20your%20AI%20coding%20agents%20(Claude%20Code%2C%20Codex%2C%20Antigravity%2C%20Grok%2C%20OpenCode%20%E2%80%A6)%20in%20one%20calm%20desktop%20app">Hacker News</a>&nbsp;&nbsp;·&nbsp; <a href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2FAyont%2FAyCode">LinkedIn</a></sub></p>
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://aycode.ai/assets/look/see-abend-1600.webp">
@@ -226,3 +249,5 @@ Macs with Apple Silicon, Windows 10 and 11, and 64-bit Linux as a beta (AppImage
 </picture></p>
 
 <p align="center"><sub><a href="https://aycode.ai/">aycode.ai</a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/docs/">Docs</a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/changelog/">Changelog</a>&nbsp;&nbsp;·&nbsp; <a href="https://x.com/AyCodeAI">X @AyCodeAI</a>&nbsp;&nbsp;·&nbsp; <a href="https://www.instagram.com/aycodeai/">Instagram @aycodeai</a>&nbsp;&nbsp;·&nbsp; <a href="https://www.linkedin.com/company/aycodeai/">LinkedIn</a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/imprint/">Imprint</a>&nbsp;&nbsp;·&nbsp; <a href="https://aycode.ai/privacy/">Privacy</a></sub></p>
+
+<p align="center"><sub>Background images and film scenes are AI-generated. The app images are real screenshots.</sub></p>
